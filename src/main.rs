@@ -8,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::{cmp, fs};
+use crossterm::event;
 
 mod io;
 
@@ -1285,12 +1286,14 @@ fn draw_control_panel(app_manager: &mut AppManager)
 
 fn get_user_key() -> Option<KeyCode>
 {
-    let event = read().expect("Input error.");
-    match event
+    let event = event::read().expect("Input Error");
+
+    if let Some(key_event) = event.as_key_press_event()
     {
-        Event::Key(key_event) => Some(key_event.code),
-        _ => None,
+        return Some(key_event.code);
     }
+
+    None
 }
 
 fn draw_window(renderer: &mut Out, size: &Vector2, position: &Vector2)
