@@ -1,0 +1,19 @@
+[package]
+name = "time-tracker"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.41"
+crossterm = "0.29.0"
+
+
+[lints.clippy]
+pedantic                 = { level = "warn", priority = -1 }
+needless_borrow          = "warn"
+unnecessary_unwrap       = "warn"
+clone_on_ref_ptr         = "warn"
+multiple_inherent_impl   = "warn"
+uninlined_format_args    = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss           = "allow"
