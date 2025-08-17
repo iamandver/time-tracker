@@ -370,8 +370,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "time-tracker"
-version = "0.1.0"
+name = "tracker"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "crossterm",

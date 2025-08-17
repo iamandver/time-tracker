@@ -1,6 +1,7 @@
 use crate::io::{ColorType, Out, Vector2};
 use chrono::{Datelike, Local, NaiveDateTime, Timelike};
-use crossterm::event::{read, Event, KeyCode};
+use crossterm::event;
+use crossterm::event::KeyCode;
 use std::cmp::PartialEq;
 use std::env::current_exe;
 use std::fmt::{Display, Formatter};
@@ -8,7 +9,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::{cmp, fs};
-use crossterm::event;
 
 mod io;
 
@@ -28,6 +28,7 @@ static COL_BG_POPUP: u8 = ANSI_GRAY;
 static COL_OUTLINE_POPUP: u8 = ANSI_BLACK;
 static COL_TEXT_WHITE: u8 = ANSI_WHITE;
 static COL_TEXT_BLACK: u8 = ANSI_BLACK;
+static COL_WINDOW_SHADOW: u8 = ANSI_BLACK;
 static COL_TEXT_HIGHLIGHT: u8 = ANSI_YELLOW;
 static COL_TEXT_DIM: u8 = ANSI_CYAN_DARK;
 static COL_TEXT_RED_DARK: u8 = ANSI_RED_DARK;
@@ -54,6 +55,7 @@ const KEY_NEW: KeyCode = KeyCode::Char('n');
 const KEY_DELETE: KeyCode = KeyCode::Char('d');
 const KEY_END: KeyCode = KeyCode::Char(' ');
 const KEY_EDIT: KeyCode = KeyCode::Char('e');
+const KEY_CONTINUE: KeyCode = KeyCode::Char('c');
 const KEY_QUIT: KeyCode = KeyCode::Char('q');
 const KEY_ENTER: KeyCode = KeyCode::Enter;
 const KEY_TAB: KeyCode = KeyCode::Tab;
@@ -125,23 +127,31 @@ enum CommandState
 #[derive(PartialEq, Copy, Clone)]
 enum InputField
 {
-    Description(PromptOpen), // close previous inside here
-    Tag(EditState),
+    Description(ConfirmOpen),
+    Tag(TagEditState),
 }
 
 #[derive(PartialEq, Copy, Clone)]
-enum PromptOpen
+enum SessionEditState
 {
-    Yes,
-    No,
+    Modify(ConfirmOpen),
+    Continue(ConfirmOpen),
+    Delete(ConfirmOpen),
 }
 
 #[derive(PartialEq, Copy, Clone)]
-enum EditState
+enum TagEditState
 {
     Select,
     New,
-    Delete(bool),
+    Delete(ConfirmOpen),
+}
+
+#[derive(PartialEq, Copy, Clone)]
+enum ConfirmOpen
+{
+    Yes,
+    No,
 }
 
 impl Display for CommandState
@@ -190,21 +200,21 @@ impl Display for InputField
         }
     }
 }
-impl Display for EditState
+impl Display for TagEditState
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result
     {
         match self
         {
-            EditState::Select =>
+            TagEditState::Select =>
             {
                 write!(f, "Select")
             }
-            EditState::New =>
+            TagEditState::New =>
             {
                 write!(f, "New")
             }
-            EditState::Delete(_) =>
+            TagEditState::Delete(_) =>
             {
                 write!(f, "Delete")
             }
@@ -482,7 +492,7 @@ impl AppManager
     fn new() -> Self
     {
         let mut manager = AppManager {
-            version: "0.2.2".to_string(),
+            version: "0.2.4".to_string(),
             renderer: Out::new(),
             database_handler: DatabaseHandler::new(),
             date_format: "%d-%m-%Y %H:%M:%S".to_string(),
@@ -622,11 +632,12 @@ impl AppManager
 
 fn debug_draw(app_manager: &mut AppManager, message: &str)
 {
+    let formatted_msg = format!(" {message} ");
     let window_size = app_manager.renderer.get_terminal_size();
-    let debug_pos = Vector2::new(window_size.x - message.len() as u16 - 4, 0);
+    let debug_pos = Vector2::new(window_size.x - formatted_msg.len() as u16 - 2, app_manager.renderer.get_terminal_size().y - 2);
 
     app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_MAIN);
-    app_manager.renderer.draw_at(format!(" v{} ", &app_manager.version), &debug_pos);
+    app_manager.renderer.draw_at(formatted_msg, &debug_pos);
     app_manager.renderer.pop_color(ColorType::Foreground);
 }
 
@@ -656,7 +667,7 @@ fn update(app_manager: &mut AppManager)
             {
                 KEY_NEW =>
                 {
-                    app_manager.state = CommandState::Input(InputField::Description(PromptOpen::No));
+                    app_manager.state = CommandState::Input(InputField::Description(ConfirmOpen::No));
                 }
                 KEY_DELETE =>
                 {
@@ -681,7 +692,7 @@ fn update(app_manager: &mut AppManager)
             {
                 InputField::Description(confirm_end_previous) => match confirm_end_previous
                 {
-                    PromptOpen::Yes =>
+                    ConfirmOpen::Yes =>
                     {
                         if key == KEY_YES
                         {
@@ -691,10 +702,10 @@ fn update(app_manager: &mut AppManager)
                         }
                         else if key == KEY_NO || key == KEY_ESCAPE
                         {
-                            app_manager.state = CommandState::Input(InputField::Description(PromptOpen::No));
+                            app_manager.state = CommandState::Input(InputField::Description(ConfirmOpen::No));
                         }
                     }
-                    PromptOpen::No => match key
+                    ConfirmOpen::No => match key
                     {
                         KEY_ESCAPE =>
                         {
@@ -708,7 +719,7 @@ fn update(app_manager: &mut AppManager)
                         {
                             if app_manager.is_last_session_still_running()
                             {
-                                app_manager.state = CommandState::Input(InputField::Description(PromptOpen::Yes));
+                                app_manager.state = CommandState::Input(InputField::Description(ConfirmOpen::Yes));
                             }
                             else
                             {
@@ -719,7 +730,7 @@ fn update(app_manager: &mut AppManager)
                         KEY_TAB =>
                         {
                             app_manager.temp_tag_index = app_manager.get_selected_tag_index();
-                            app_manager.state = CommandState::Input(InputField::Tag(EditState::Select));
+                            app_manager.state = CommandState::Input(InputField::Tag(TagEditState::Select));
                         }
                         KeyCode::Char(character) =>
                         {
@@ -731,15 +742,15 @@ fn update(app_manager: &mut AppManager)
                 },
                 InputField::Tag(edit_state) => match edit_state
                 {
-                    EditState::Select => match key
+                    TagEditState::Select => match key
                     {
                         KEY_NEW =>
                         {
-                            app_manager.state = CommandState::Input(InputField::Tag(EditState::New));
+                            app_manager.state = CommandState::Input(InputField::Tag(TagEditState::New));
                         }
                         KEY_ESCAPE =>
                         {
-                            app_manager.state = CommandState::Input(InputField::Description(PromptOpen::No));
+                            app_manager.state = CommandState::Input(InputField::Description(ConfirmOpen::No));
                         }
                         KEY_UP =>
                         {
@@ -758,16 +769,16 @@ fn update(app_manager: &mut AppManager)
                         KEY_ENTER =>
                         {
                             app_manager.set_selected_tag_index(app_manager.temp_tag_index);
-                            app_manager.state = CommandState::Input(InputField::Description(PromptOpen::No));
+                            app_manager.state = CommandState::Input(InputField::Description(ConfirmOpen::No));
                         }
                         _ =>
                         {}
                     },
-                    EditState::New => match key
+                    TagEditState::New => match key
                     {
                         KEY_ESCAPE =>
                         {
-                            app_manager.state = CommandState::Input(InputField::Tag(EditState::Select));
+                            app_manager.state = CommandState::Input(InputField::Tag(TagEditState::Select));
                         }
                         KEY_BACKSPACE =>
                         {
@@ -776,7 +787,7 @@ fn update(app_manager: &mut AppManager)
                         KEY_ENTER =>
                         {
                             app_manager.try_store_tag();
-                            app_manager.state = CommandState::Input(InputField::Description(PromptOpen::No));
+                            app_manager.state = CommandState::Input(InputField::Description(ConfirmOpen::No));
                         }
                         KeyCode::Char(character) =>
                         {
@@ -785,7 +796,7 @@ fn update(app_manager: &mut AppManager)
                         _ =>
                         {}
                     },
-                    EditState::Delete(_) =>
+                    TagEditState::Delete(_) =>
                     {}
                 },
             },
@@ -873,15 +884,13 @@ fn update(app_manager: &mut AppManager)
 fn draw_window_title(renderer: &mut Out, title: &str, window_pos: &Vector2)
 {
     const OFFSET: u16 = 2;
-    // let title_pos = Vector2::new(window_pos.x + ((confirm_popup_size.x - title.len() as u16) / 2) - 1, window_pos.y);
     let title_pos = Vector2::new(window_pos.x + OFFSET, window_pos.y);
-
     renderer.draw_at(format!(" {} ", title), &title_pos);
 }
 
 fn draw_window_shadow(renderer: &mut Out, window_size: &Vector2, window_pos: &Vector2)
 {
-    renderer.push_color(ColorType::Background, COL_TEXT_BLACK);
+    renderer.push_color(ColorType::Background, COL_WINDOW_SHADOW);
     let shadow_bottom = " ".repeat(window_size.x as usize);
     renderer.draw_at(shadow_bottom, &Vector2::new(window_pos.x + 1, window_pos.y + window_size.y));
 
@@ -898,7 +907,7 @@ fn draw_yes_no_popup(app_manager: &mut AppManager, title: &str)
     let window_size = app_manager.renderer.get_terminal_size();
     let confirm_popup_pos = Vector2::new((window_size.x - confirm_popup_size.x) / 2, (window_size.y - confirm_popup_size.y) / 2);
     app_manager.renderer.push_color(ColorType::Background, COL_BG_POPUP);
-    app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_BLACK);
+    app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_POPUP);
 
     draw_window(&mut app_manager.renderer, &confirm_popup_size, &confirm_popup_pos);
     draw_window_shadow(&mut app_manager.renderer, &confirm_popup_size, &confirm_popup_pos);
@@ -992,6 +1001,7 @@ fn render(app_manager: &mut AppManager)
 
     app_manager.renderer.push_color(ColorType::Foreground, COL_BG_MAIN);
     app_manager.renderer.push_color(ColorType::Background, COL_OUTLINE_MAIN);
+    app_manager.renderer.draw_at(" ".repeat(app_manager.renderer.get_terminal_size().x as usize), &Vector2::new(0, 0));
     draw_window_title(&mut app_manager.renderer, "SESSIONS", &Vector2::new(0, 0));
     app_manager.renderer.pop_color(ColorType::Foreground);
     app_manager.renderer.pop_color(ColorType::Background);
@@ -1068,7 +1078,7 @@ fn render(app_manager: &mut AppManager)
             let input_field_pos = Vector2::new((terminal_size.x - input_field_size.x) / 2, (terminal_size.y - input_field_size.y) / 2);
 
             app_manager.renderer.push_color(ColorType::Background, COL_BG_POPUP);
-            app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_BLACK);
+            app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_POPUP);
 
             draw_window(&mut app_manager.renderer, &input_field_size, &input_field_pos);
             draw_window_shadow(&mut app_manager.renderer, &input_field_size, &input_field_pos);
@@ -1112,11 +1122,11 @@ fn render(app_manager: &mut AppManager)
             {
                 InputField::Description(confirm_end_previous) => match confirm_end_previous
                 {
-                    PromptOpen::Yes =>
+                    ConfirmOpen::Yes =>
                     {
                         draw_yes_no_popup(app_manager, "END RUNNING SESSION?");
                     }
-                    PromptOpen::No =>
+                    ConfirmOpen::No =>
                     {
                         let cursor_pos_x =
                             description_input_pos.x + (description_input_label.len() + app_manager.description_buffer.len()) as u16;
@@ -1187,9 +1197,9 @@ fn render(app_manager: &mut AppManager)
 
                     match edit_state
                     {
-                        EditState::Select =>
+                        TagEditState::Select =>
                         {}
-                        EditState::New =>
+                        TagEditState::New =>
                         {
                             let new_tag_title = "NEW TAG";
                             let new_tag_window_pos = &tag_dropdown_text_pos;
@@ -1207,7 +1217,7 @@ fn render(app_manager: &mut AppManager)
                             let new_tag_text_pos = Vector2::new(new_tag_window_pos.x + 2, new_tag_window_pos.y + 1);
                             app_manager.renderer.draw_at(format!("{}{}", &app_manager.tag_buffer, CURSOR), &new_tag_text_pos);
                         }
-                        EditState::Delete(_) =>
+                        TagEditState::Delete(_) =>
                         {}
                     }
                 }
@@ -1241,14 +1251,13 @@ fn render(app_manager: &mut AppManager)
         }
     }
 
-    let version = app_manager.version.clone();
+    let version = format!("Version {}", &app_manager.version);
     debug_draw(app_manager, &version);
 
     app_manager.renderer.pop_color(ColorType::Foreground);
     app_manager.renderer.pop_color(ColorType::Background);
 
     draw_control_panel(app_manager);
-
 
     app_manager.renderer.render();
 }
