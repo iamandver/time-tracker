@@ -1,0 +1,14 @@
+pub const FRAME_H: char = '═';
+pub const FRAME_V: char = '║';
+pub const CORNER_TL: char = '╔';
+pub const CORNER_TR: char = '╗';
+pub const CORNER_BR: char = '╝';
+pub const CORNER_BL: char = '╚';
+pub const INTERSECT_T: char = '╤';
+pub const INTERSECT_B: char = '╧';
+pub const INTERSECT_L: char = '╟';
+pub const INTERSECT_R: char = '╢';
+pub const DIVIDER_H: char = '─';
+pub const DIVIDER_V: char = '│';
+pub const CURSOR: char = '█';
+pub const ARROW: char = '▶';

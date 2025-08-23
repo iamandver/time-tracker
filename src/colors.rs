@@ -1,0 +1,21 @@
+const ANSI_WHITE: u8 = 255;
+const ANSI_BLUE: u8 = 19;
+const ANSI_CYAN: u8 = 87;
+const ANSI_CYAN_DARK: u8 = 73;
+const ANSI_YELLOW: u8 = 226;
+const ANSI_GRAY: u8 = 248;
+const ANSI_BLACK: u8 = 16;
+const ANSI_RED_DARK: u8 = 124;
+const ANSI_RED: u8 = 160;
+
+pub static COL_BG_MAIN: u8 = ANSI_BLUE;
+pub static COL_OUTLINE_MAIN: u8 = ANSI_CYAN;
+pub static COL_BG_POPUP: u8 = ANSI_GRAY;
+pub static COL_OUTLINE_POPUP: u8 = ANSI_BLACK;
+pub static COL_TEXT_WHITE: u8 = ANSI_WHITE;
+pub static COL_TEXT_BLACK: u8 = ANSI_BLACK;
+pub static COL_WINDOW_SHADOW: u8 = ANSI_BLACK;
+pub static COL_TEXT_HIGHLIGHT: u8 = ANSI_YELLOW;
+pub static COL_TEXT_DIM: u8 = ANSI_CYAN_DARK;
+pub static COL_TEXT_RED_DARK: u8 = ANSI_RED_DARK;
+pub static COL_TEXT_RED: u8 = ANSI_RED;

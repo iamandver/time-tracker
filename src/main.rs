@@ -1,774 +1,30 @@
-use crate::io::{ColorType, Out, Vector2};
-use chrono::{Datelike, Local, NaiveDateTime, NaiveTime, Timelike};
+use crate::app_state::*;
+use crate::database_handler::DatabaseHandler;
+use chrono::{Datelike, Local, NaiveDateTime, Timelike};
+use colors::*;
+use control_keys::*;
 use crossterm::event;
 use crossterm::event::KeyCode;
+use io::{ColorType, Out, Vector2};
+use session::*;
+use sprites::*;
+use std::cmp;
 use std::cmp::PartialEq;
-use std::env::current_exe;
-use std::fmt::{Display, Formatter};
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::ops::{Add, AddAssign, SubAssign};
-use std::path::Path;
-use std::{cmp, fs};
 
+mod app_state;
+mod colors;
+mod control_keys;
+mod database_handler;
 mod io;
-
-const ANSI_WHITE: u8 = 255;
-const ANSI_BLUE: u8 = 19;
-const ANSI_CYAN: u8 = 87;
-const ANSI_CYAN_DARK: u8 = 73;
-const ANSI_YELLOW: u8 = 226;
-const ANSI_GRAY: u8 = 248;
-const ANSI_BLACK: u8 = 16;
-const ANSI_RED_DARK: u8 = 124;
-const ANSI_RED: u8 = 160;
-
-static COL_BG_MAIN: u8 = ANSI_BLUE;
-static COL_OUTLINE_MAIN: u8 = ANSI_CYAN;
-static COL_BG_POPUP: u8 = ANSI_GRAY;
-static COL_OUTLINE_POPUP: u8 = ANSI_BLACK;
-static COL_TEXT_WHITE: u8 = ANSI_WHITE;
-static COL_TEXT_BLACK: u8 = ANSI_BLACK;
-static COL_WINDOW_SHADOW: u8 = ANSI_BLACK;
-static COL_TEXT_HIGHLIGHT: u8 = ANSI_YELLOW;
-static COL_TEXT_DIM: u8 = ANSI_CYAN_DARK;
-static COL_TEXT_RED_DARK: u8 = ANSI_RED_DARK;
-static COL_TEXT_RED: u8 = ANSI_RED;
-
-// graphics
-const FRAME_H: char = '═';
-const FRAME_V: char = '║';
-const CORNER_TL: char = '╔';
-const CORNER_TR: char = '╗';
-const CORNER_BR: char = '╝';
-const CORNER_BL: char = '╚';
-const INTERSECT_T: char = '╤';
-const INTERSECT_B: char = '╧';
-const INTERSECT_L: char = '╟';
-const INTERSECT_R: char = '╢';
-const DIVIDER_H: char = '─';
-const DIVIDER_V: char = '│';
-
-const CURSOR: char = '█';
-const ARROW: char = '▶';
-
-const KEY_NEW: KeyCode = KeyCode::Char('n');
-const KEY_DELETE: KeyCode = KeyCode::Char('d');
-const KEY_END: KeyCode = KeyCode::Char(' ');
-const KEY_EDIT: KeyCode = KeyCode::Char('e');
-const KEY_CONTINUE: KeyCode = KeyCode::Char('c');
-const KEY_QUIT: KeyCode = KeyCode::Char('q');
-const KEY_ENTER: KeyCode = KeyCode::Enter;
-const KEY_TAB: KeyCode = KeyCode::Tab;
-const KEY_YES: KeyCode = KeyCode::Char('y');
-const KEY_NO: KeyCode = KeyCode::Char('n');
-const KEY_UP: KeyCode = KeyCode::Up;
-const KEY_DOWN: KeyCode = KeyCode::Down;
-const KEY_LEFT: KeyCode = KeyCode::Left;
-const KEY_RIGHT: KeyCode = KeyCode::Right;
-const KEY_BACKSPACE: KeyCode = KeyCode::Backspace;
-const KEY_ESCAPE: KeyCode = KeyCode::Esc;
-
-fn key_to_char(key: KeyCode) -> String
-{
-    let character: String = match key
-    {
-        KeyCode::Char(c) => match c
-        {
-            ' ' => "SPACE".to_string(),
-            _ => c.to_string(),
-        },
-        _ =>
-        {
-            panic!("Unknows Key type.")
-        }
-    };
-
-    character
-}
-
-type Controls = Vec<Control>;
-
-fn get_controls() -> Vec<Control>
-{
-    vec![
-        Control {
-            key: KEY_NEW,
-            description: "new".to_string(),
-        },
-        Control {
-            key: KEY_DELETE,
-            description: "delete".to_string(),
-        },
-        Control {
-            key: KEY_END,
-            description: "end".to_string(),
-        },
-        Control {
-            key: KEY_QUIT,
-            description: "quit".to_string(),
-        },
-    ]
-}
-
-struct Control
-{
-    key: KeyCode,
-    description: String,
-}
-//
-// #[derive(PartialEq, Copy, Clone)]
-// struct Modify
-// {
-//     is_confirm_open: bool,
-// }
-//
-// impl Modify
-// {
-//     fn default() -> Self
-//     {
-//         Self {
-//             is_confirm_open: false,
-//         }
-//     }
-//     fn set_confirm_open(&mut self, open: bool)
-//     {
-//         self.is_confirm_open = open;
-//     }
-//
-//     fn is_confirm_open(&self) -> bool
-//     {
-//         self.is_confirm_open
-//     }
-//
-//     fn execute(&self, app_manager: &mut AppManager)
-//     {
-//         // app_manager.delete_selected_session();
-//     }
-// }
-//
-// #[derive(PartialEq, Copy, Clone)]
-// struct Continue
-// {
-//     is_confirm_open: bool,
-// }
-//
-// impl Continue
-// {
-//     fn default() -> Self
-//     {
-//         Self {
-//             is_confirm_open: false,
-//         }
-//     }
-//
-//     fn set_confirm_open(&mut self, open: bool)
-//     {
-//         self.is_confirm_open = open;
-//     }
-//
-//     fn is_confirm_open(&self) -> bool
-//     {
-//         self.is_confirm_open
-//     }
-//
-//     fn execute(&self, app_manager: &mut AppManager)
-//     {
-//         // app_manager.delete_selected_session();
-//     }
-// }
-//
-// #[derive(PartialEq, Clone)]
-// struct Delete
-// {
-//     command_label: String,
-//     is_confirm_open: bool
-// }
-//
-// impl Delete
-// {
-//     fn default() -> Self
-//     {
-//         Self {
-//             command_label: "DEL".to_string(),
-//             is_confirm_open: false,
-//         }
-//     }
-//
-//     fn set_confirm_open(&mut self, open: bool) -> &Self
-//     {
-//         self.is_confirm_open = open;
-//
-//         self
-//     }
-//
-//     fn is_confirm_open(&self) -> bool
-//     {
-//         self.is_confirm_open
-//     }
-//
-//     fn execute(&self, app_manager: &mut AppManager)
-//     {
-//         app_manager.delete_selected_session();
-//     }
-// }
-
-#[derive(Clone)]
-enum CommandState
-{
-    Idle,
-    New(SessionInputState),
-    Modify(SessionModifyState),
-    End,
-    Quitting,
-}
-
-#[derive(PartialEq, Copy, Clone)]
-enum SessionInputState
-{
-    Description(ConfirmOpen),
-    Tag(TagInputState),
-}
-
-#[derive(Clone)]
-enum SessionModifyState
-{
-    Edit(SessionEditState),
-    Continue(ConfirmOpen),
-    Delete(ConfirmOpen),
-}
-
-#[derive(Clone)]
-enum SessionEditState
-{
-    Browse,
-    EditFields(SessionFieldEditState),
-    Confirm,
-}
-
-#[derive(Clone)]
-enum SessionFieldEditState
-{
-    Browse,
-    Editing,
-}
-
-#[derive(Clone)]
-enum SessionField
-{
-    Date,
-    Description,
-    Tag,
-    Start,
-    End,
-}
-
-// #[derive(Clone)]
-// enum EditType
-// {
-//     TextInput,
-//     StepInput,
-//     Dropdown
-// }
-
-#[derive(PartialEq, Copy, Clone)]
-enum TagInputState
-{
-    Select,
-    New,
-    Delete(ConfirmOpen),
-}
-
-#[derive(PartialEq, Copy, Clone)]
-enum ConfirmOpen
-{
-    Yes,
-    No,
-}
-
-impl Display for CommandState
-{
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result
-    {
-        match self
-        {
-            CommandState::Idle =>
-            {
-                write!(f, "List")
-            }
-            CommandState::New(input_field) =>
-            {
-                write!(f, "Input: {}", input_field)
-            }
-            CommandState::Modify(_) =>
-            {
-                write!(f, "Delete")
-            }
-            CommandState::End =>
-            {
-                write!(f, "End")
-            }
-            CommandState::Quitting =>
-            {
-                write!(f, "Quitting")
-            }
-        }
-    }
-}
-impl Display for SessionInputState
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result
-    {
-        match self
-        {
-            SessionInputState::Description(_) =>
-            {
-                write!(f, "Description")
-            }
-            SessionInputState::Tag(tag_edit_state) =>
-            {
-                write!(f, "Tag: {}", tag_edit_state)
-            }
-        }
-    }
-}
-impl Display for TagInputState
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result
-    {
-        match self
-        {
-            TagInputState::Select =>
-            {
-                write!(f, "Select")
-            }
-            TagInputState::New =>
-            {
-                write!(f, "New")
-            }
-            TagInputState::Delete(_) =>
-            {
-                write!(f, "Delete")
-            }
-        }
-    }
-}
-
-struct Session
-{
-    description: String,
-    tag: String,
-    start: NaiveDateTime,
-    end: Option<NaiveDateTime>,
-}
-
-impl Clone for Session
-{
-    fn clone(&self) -> Self
-    {
-        Session::from(&self.description, &self.tag, self.start, self.end)
-    }
-}
-
-impl Session
-{
-    fn get_field_as_string(&self, field: &SessionField) -> String
-    {
-        match field
-        {
-            SessionField::Date => self.get_date_string(),
-            SessionField::Description => self.description.clone(),
-            SessionField::Tag => self.tag.clone(),
-            SessionField::Start => self.get_start_time_string(),
-            SessionField::End => self.get_end_time_string().unwrap_or_default(),
-        }
-    }
-
-    const fn get_number_of_fields() -> usize
-    {
-        // date is treated separately, hence the 4 + 1 = 5
-        // duration cannot be edited, only updated once start/end are modified
-        5
-    }
-
-    fn get_date_string(&self) -> String
-    {
-        format!("{}", self.start.format("%d %b %y"))
-    }
-
-    fn get_start_time_string(&self) -> String
-    {
-        format!("{}", self.start.format("%H:%M:%S"))
-    }
-
-    fn get_end_time_string(&self) -> Option<String>
-    {
-        if let Some(end) = self.end
-        {
-            return Some(format!("{}", end.format("%H:%M:%S")));
-        }
-
-        None
-    }
-
-    fn get_duration_string(&self) -> Option<String>
-    {
-        if let Some(end) = self.end
-        {
-            let duration = end - self.start;
-
-            let secs_per_minute: i64 = 60;
-            let secs_per_hour: i64 = 3600;
-
-            let hours = duration.num_hours();
-            let minutes = duration.num_minutes() - hours * secs_per_minute;
-            let seconds = duration.num_seconds() - hours * secs_per_hour - minutes * secs_per_minute;
-
-            return Some(format!("{:02}:{:02}:{:02}", hours, minutes, seconds));
-        }
-
-        None
-    }
-
-    fn construct_db_string(&self, separator: char, format: &str) -> String
-    {
-        let format_split = format.split(' ').collect::<Vec<&str>>();
-        let date_format = format_split[0];
-        let time_format = format_split[1];
-
-        let end = self.end.expect("Cannot export ongoing session.");
-        let duration = end - self.start;
-
-        let secs_per_minute = 60;
-        let secs_per_hour = 3600;
-
-        let hours = duration.num_hours();
-        let minutes = duration.num_minutes() - hours * secs_per_minute;
-        let seconds = duration.num_seconds() - hours * secs_per_hour - minutes * secs_per_minute;
-
-        let date = format!("{}", self.start.format(date_format));
-        let description = &self.description;
-        let tag = &self.tag;
-        let start = format!("{}", self.start.format(time_format));
-        let end = format!("{}", end.format(time_format));
-        let duration = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
-
-        format!("{date}{separator}{description}{separator}{tag}{separator}{start}{separator}{end}{separator}{duration}")
-    }
-
-    fn set_field_from_string(&mut self, field: &SessionField, field_value: &String)
-    {
-        const DATE_FORMAT: &str = "%d %b %y";
-        const TIME_FORMAT: &str = "%H:%M:%S";
-        let datetime_format = format!("{DATE_FORMAT} {TIME_FORMAT}");
-
-        match field
-        {
-            SessionField::Date =>
-            {
-                let new_date_string = field_value;
-                let start_time_string = self.get_start_time_string();
-                let new_datetime_string = format!("{start_time_string} {new_date_string}");
-
-                if let Ok(new_date) = NaiveDateTime::parse_from_str(&new_datetime_string, &datetime_format)
-                {
-                    let delta = new_date - self.start;
-                    self.start = self.start.add(delta);
-
-                    if let Some(end) = self.end
-                    {
-                        self.end = Some(end.add(delta));
-                    }
-                }
-            }
-            SessionField::Description =>
-            {
-                let description = field_value.trim();
-
-                if !description.is_empty()
-                {
-                    self.description = String::from(description);
-                }
-            }
-            SessionField::Tag =>
-            {
-                let tag = field_value.trim();
-
-                if !tag.is_empty()
-                {
-                    self.tag = String::from(tag);
-                }
-            }
-            SessionField::Start =>
-            {
-                let new_start_time_string = field_value;
-                let date_string = self.get_date_string();
-                let new_datetime_string = format!("{new_start_time_string} {date_string}");
-
-                if let Ok(new_start_time) = NaiveDateTime::parse_from_str(&new_datetime_string, &datetime_format)
-                {
-                    let delta = new_start_time - self.start;
-                    self.start = self.start.add(delta);
-                }
-            }
-            SessionField::End =>
-            {
-                let new_end_time_string = field_value;
-                let date_string = self.get_date_string();
-                let new_datetime_string = format!("{new_end_time_string} {date_string}");
-
-                if let Ok(new_end_time) = NaiveDateTime::parse_from_str(&new_datetime_string, &datetime_format)
-                {
-                    if let Some(end) = self.end
-                    {
-                        let delta = new_end_time - self.start;
-                        self.end = Some(end.add(delta));
-                    }
-                }
-            }
-            _ =>
-            {
-                panic!("Selected session field index out of bounds.");
-            }
-        }
-    }
-
-    fn from(description: &str, tag: &str, start: NaiveDateTime, end: Option<NaiveDateTime>) -> Session
-    {
-        Session {
-            description: description.to_string(),
-            tag: tag.to_string(),
-            start,
-            end,
-        }
-    }
-
-    fn is_running(&self) -> bool
-    {
-        self.end.is_none()
-    }
-}
-
-struct DatabaseHandler
-{
-    database_path: String,
-    sessions_file_name: String,
-    tags_file_name: String,
-    value_separator: char,
-}
-
-impl DatabaseHandler
-{
-    fn new() -> Self
-    {
-        let current_exe = current_exe().expect("Failed to retrieve executable path.");
-        let current_path = current_exe.parent().expect("Failed to retrieve executable parent folder.");
-        let database_path = current_path.join("database");
-
-        let handler = DatabaseHandler {
-            database_path: String::from(database_path.to_str().expect("Failed to parse db path string.")),
-            sessions_file_name: String::from("sessions.txt"),
-            tags_file_name: String::from("tags.txt"),
-            value_separator: ';',
-        };
-
-        handler.try_create_data_path_and_files().expect("Error while creating database.");
-
-        handler
-    }
-
-    fn try_create_data_path_and_files(&self) -> Result<(), Box<dyn std::error::Error>>
-    {
-        let database_path = Path::new(&self.database_path);
-        let sessions_path = database_path.join(&self.sessions_file_name);
-        let tags_path = database_path.join(&self.tags_file_name);
-
-        if !database_path.exists()
-        {
-            fs::create_dir(database_path)?;
-        }
-
-        if !sessions_path.exists()
-        {
-            File::create(sessions_path)?;
-        }
-
-        if !tags_path.exists()
-        {
-            File::create(tags_path)?;
-        }
-
-        Ok(())
-    }
-
-    fn export_session(&self, session_string: &String) -> Result<(), Box<dyn std::error::Error>>
-    {
-        let database_path = Path::new(&self.database_path);
-        let sessions_path = database_path.join(&self.sessions_file_name);
-
-        if let Ok(mut sessions_db) = OpenOptions::new().append(true).open(sessions_path)
-        {
-            sessions_db.write_fmt(format_args!("\n{}", session_string))?;
-        }
-
-        self.remove_empty_lines(&self.sessions_file_name);
-
-        Ok(())
-    }
-
-    fn export_all_sessions(&self, sessions: &Vec<Session>, date_format: &str) -> Result<(), Box<dyn std::error::Error>>
-    {
-        let database_path = Path::new(&self.database_path);
-        let sessions_path = database_path.join(&self.sessions_file_name);
-
-        if let Ok(mut sessions_db) = OpenOptions::new().write(true).truncate(true).open(sessions_path)
-        {
-            for session in sessions
-            {
-                let session_string = session.construct_db_string(self.value_separator, date_format);
-                sessions_db.write_fmt(format_args!("\n{}", session_string))?;
-            }
-        }
-
-        self.remove_empty_lines(&self.sessions_file_name);
-
-        Ok(())
-    }
-
-    fn export_tag(&self, tag: &String) -> Result<(), Box<dyn std::error::Error>>
-    {
-        let database_path = Path::new(&self.database_path);
-        let tags_path = database_path.join(&self.tags_file_name);
-
-        if let Ok(mut tags) = OpenOptions::new().append(true).open(tags_path)
-        {
-            tags.write_fmt(format_args!("\n{}", tag))?;
-        }
-
-        self.remove_empty_lines(&self.tags_file_name);
-
-        Ok(())
-    }
-
-    fn import_sessions(&self, format: &str) -> Option<Vec<Session>>
-    {
-        let database_path = Path::new(&self.database_path);
-        let sessions_path = database_path.join(&self.sessions_file_name);
-
-        if let Ok(sessions) = OpenOptions::new().read(true).open(sessions_path)
-        {
-            let lines = BufReader::new(sessions).lines().map_while(Result::ok).filter(|x| !x.is_empty()).collect::<Vec<String>>();
-
-            return self.parse_sessions(lines, format);
-        }
-
-        None
-    }
-
-    fn parse_sessions(&self, sessions: Vec<String>, format: &str) -> Option<Vec<Session>>
-    {
-        let mut parsed_sessions = Vec::new();
-        for session_string in sessions
-        {
-            let session_split = session_string.split(self.value_separator).collect::<Vec<&str>>();
-
-            let date = session_split[0];
-            let description = session_split[1];
-            let tag = session_split[2];
-            let start = session_split[3];
-            let end = session_split[4];
-
-            let start_string = format!("{date} {start}");
-            let end_string = format!("{date} {end}");
-
-            let start_date = NaiveDateTime::parse_from_str(&start_string, format).expect("Error parsing start date.");
-            let end_date = NaiveDateTime::parse_from_str(&end_string, format).expect("Error parsing end date.");
-
-            let session = Session::from(description, tag, start_date, Some(end_date));
-
-            parsed_sessions.push(session);
-        }
-
-        if parsed_sessions.is_empty()
-        {
-            return None;
-        }
-
-        Some(parsed_sessions)
-    }
-
-    fn import_tags(&self) -> Option<Vec<String>>
-    {
-        let database_path = Path::new(&self.database_path);
-        let tags_path = database_path.join(&self.tags_file_name);
-
-        if let Ok(tags) = OpenOptions::new().read(true).open(tags_path)
-        {
-            let tags = BufReader::new(tags).lines().map_while(Result::ok).filter(|x| !x.is_empty()).collect::<Vec<String>>();
-
-            return Some(tags);
-        }
-
-        None
-    }
-
-    fn remove_empty_lines(&self, file_name: &String)
-    {
-        let database_path = Path::new(&self.database_path);
-        let file_path = database_path.join(file_name);
-        let temp_path = format!("{file_name}.temp");
-
-        if let Ok(file) = OpenOptions::new().read(true).open(file_path.clone())
-        {
-            let entries = BufReader::new(file).lines().map_while(Result::ok).filter(|x| !x.is_empty()).collect::<Vec<String>>();
-
-            if !entries.is_empty()
-            {
-                if let Ok(mut temp_file) = OpenOptions::new().truncate(true).write(true).create_new(true).open(temp_path.clone())
-                {
-                    for entry in entries
-                    {
-                        temp_file.write_fmt(format_args!("{}\n", entry)).expect("Failed to write to temp file.");
-                    }
-
-                    fs::rename(&temp_path, &file_path).expect("Failed renaming after removing empty lines.");
-                }
-            }
-        }
-    }
-
-    fn delete_session(&self, session_index: usize)
-    {
-        let database_path = Path::new(&self.database_path);
-        let sessions_path = database_path.join(&self.sessions_file_name);
-
-        let temp_sessions_path = database_path.join("sessions.txt.temp");
-
-        if let Ok(sessions) = OpenOptions::new().read(true).open(sessions_path.clone())
-        {
-            let mut session_entries = BufReader::new(sessions).lines().map_while(Result::ok).collect::<Vec<String>>();
-
-            session_entries.remove(session_index);
-
-            if let Ok(mut temp_sessions) =
-                OpenOptions::new().truncate(true).write(true).create_new(true).open(temp_sessions_path.clone())
-            {
-                for entry in session_entries
-                {
-                    temp_sessions.write_fmt(format_args!("{}\n", entry)).expect("Failed to delete session from database.");
-                }
-
-                fs::rename(&temp_sessions_path, &sessions_path).expect("Failed to rename new database.");
-            }
-        }
-    }
-}
+mod session;
+mod sprites;
 
 struct AppManager
 {
     version: String,
     renderer: Out,
     database_handler: DatabaseHandler,
+    value_separator: char,
     date_format: String,
     running: bool,
     tags: Vec<String>,
@@ -790,9 +46,10 @@ impl AppManager
     fn new() -> Self
     {
         let mut manager = AppManager {
-            version: "0.2.4".to_string(),
+            version: "0.3.4".to_string(),
             renderer: Out::new(),
             database_handler: DatabaseHandler::new(),
+            value_separator: ';',
             date_format: "%d-%m-%Y %H:%M:%S".to_string(),
             running: true,
             tags: Vec::new(),
@@ -809,7 +66,7 @@ impl AppManager
             session_field_buffer: String::new(),
         };
 
-        if let Some(sessions) = manager.database_handler.import_sessions(&manager.date_format)
+        if let Some(sessions) = manager.database_handler.import_sessions(manager.value_separator, &manager.date_format)
         {
             manager.sessions = sessions;
 
@@ -834,8 +91,7 @@ impl AppManager
             SessionField::Date => SessionField::Description,
             SessionField::Description => SessionField::Tag,
             SessionField::Tag => SessionField::Start,
-            SessionField::Start => SessionField::End,
-            SessionField::End => SessionField::End,
+            SessionField::Start | SessionField::End => SessionField::End,
         }
     }
 
@@ -843,8 +99,7 @@ impl AppManager
     {
         self.selected_session_field = match self.selected_session_field
         {
-            SessionField::Date => SessionField::Date,
-            SessionField::Description => SessionField::Date,
+            SessionField::Date | SessionField::Description => SessionField::Date,
             SessionField::Tag => SessionField::Description,
             SessionField::Start => SessionField::Tag,
             SessionField::End => SessionField::Start,
@@ -908,7 +163,7 @@ impl AppManager
     {
         self.tag_buffer = self.tag_buffer.trim().to_string();
 
-        if self.tag_buffer.is_empty()
+        if self.tag_buffer.is_empty() || self.tags.iter().any(|tag| tag.eq(&self.tag_buffer))
         {
             return;
         }
@@ -942,12 +197,13 @@ impl AppManager
     fn end_running_session(&mut self)
     {
         let end = self.get_current_time();
+
         if let Some(last_session) = self.sessions.last_mut()
         {
-            if last_session.end.is_none()
+            if last_session.is_running()
             {
                 last_session.end = Some(end);
-                let session_string = last_session.construct_db_string(self.database_handler.value_separator, &self.date_format);
+                let session_string = last_session.construct_db_string(self.value_separator, &self.date_format);
 
                 self.database_handler.export_session(&session_string).expect("Error exporting session.");
             }
@@ -997,10 +253,7 @@ impl AppManager
         {
             if let Some(edited_session) = self.session_edit_buffer.clone()
             {
-                selected_session.description != edited_session.description
-                    || selected_session.tag != edited_session.tag
-                    || selected_session.start != edited_session.start
-                    || selected_session.end != edited_session.end
+                !selected_session.eq(&edited_session)
             }
             else
             {
@@ -1028,7 +281,9 @@ impl AppManager
             }
         }
 
-        self.database_handler.export_all_sessions(&self.sessions, &self.date_format).expect("Failed to export all sessions to db.");
+        self.database_handler
+            .export_all_sessions(&self.sessions, self.value_separator, &self.date_format)
+            .expect("Failed to export all sessions to db.");
     }
 
     fn copy_selected_session_field_to_buffer(&mut self)
@@ -1047,13 +302,11 @@ impl AppManager
         }
     }
 
-    // duplicate
     fn copy_selected_session_to_buffer(&mut self)
     {
         if let Some(selected_session) = self.sessions.get(self.selected_session_index)
         {
-            self.session_edit_buffer =
-                Some(Session::from(&selected_session.description, &selected_session.tag, selected_session.start, selected_session.end));
+            self.session_edit_buffer = Some(selected_session.clone());
         }
     }
 
