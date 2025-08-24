@@ -42,18 +42,22 @@ impl Session
     {
         self.end.is_none()
     }
-    
-    // pub fn get_field(&self, field: &SessionField) 
-    
+
+    // pub fn get_field(&self, field: &SessionField)
+
     pub fn get_field_as_string(&self, field: &SessionField) -> String
     {
         match field
         {
-            SessionField::Date => self.get_date_string(),
-            SessionField::Description => self.description.clone(),
-            SessionField::Tag => self.tag.clone(),
-            SessionField::Start => self.get_start_time_string(),
-            SessionField::End => self.get_end_time_string().unwrap_or_default(),
+            SessionField::Date(_) => self.get_date_string(),
+            SessionField::Description(_) => self.description.clone(),
+            SessionField::Tag(_) => self.tag.clone(),
+            SessionField::Start(_) => self.get_start_time_string(),
+            SessionField::End(_) => self.get_end_time_string().unwrap_or_default(),
+            SessionField::None =>
+            {
+                panic!("Never call with variant 'None'");
+            }
         }
     }
 
@@ -122,76 +126,52 @@ impl Session
         format!("{date}{separator}{description}{separator}{tag}{separator}{start}{separator}{end}{separator}{duration}")
     }
 
-    pub fn set_field_from_string(&mut self, field: &SessionField, field_value: &String)
+    pub fn set_field(&mut self, field: &SessionField)
     {
-        const DATE_FORMAT: &str = "%d %b %y";
-        const TIME_FORMAT: &str = "%H:%M:%S";
-        let datetime_format = format!("{DATE_FORMAT} {TIME_FORMAT}");
+        // const DATE_FORMAT: &str = "%d %b %y";
+        // const TIME_FORMAT: &str = "%H:%M:%S";
+        // let datetime_format = format!("{DATE_FORMAT} {TIME_FORMAT}");
 
         match field
         {
-            SessionField::Date =>
+            SessionField::Date(new_date) =>
             {
-                let new_date_string = field_value;
-                let start_time_string = self.get_start_time_string();
-                let new_datetime_string = format!("{start_time_string} {new_date_string}");
+                let delta = *new_date - self.start;
+                self.start = self.start.add(delta);
 
-                if let Ok(new_date) = NaiveDateTime::parse_from_str(&new_datetime_string, &datetime_format)
+                if let Some(end) = self.end
                 {
-                    let delta = new_date - self.start;
-                    self.start = self.start.add(delta);
-
-                    if let Some(end) = self.end
-                    {
-                        self.end = Some(end.add(delta));
-                    }
+                    self.end = Some(end.add(delta));
                 }
             }
-            SessionField::Description =>
+            SessionField::Description(new_description) =>
             {
-                let description = field_value.trim();
+                let new_description = new_description.trim();
 
-                if !description.is_empty()
+                if !new_description.is_empty()
                 {
-                    self.description = String::from(description);
+                    self.description = String::from(new_description);
                 }
             }
-            SessionField::Tag =>
+            SessionField::Tag(new_tag) =>
             {
-                let tag = field_value.trim();
+                let new_tag = new_tag.trim();
 
-                if !tag.is_empty()
+                if !new_tag.is_empty()
                 {
-                    self.tag = String::from(tag);
+                    self.tag = String::from(new_tag);
                 }
             }
-            SessionField::Start =>
+            SessionField::Start(new_start) =>
             {
-                let new_start_time_string = field_value;
-                let date_string = self.get_date_string();
-                let new_datetime_string = format!("{new_start_time_string} {date_string}");
-
-                if let Ok(new_start_time) = NaiveDateTime::parse_from_str(&new_datetime_string, &datetime_format)
-                {
-                    let delta = new_start_time - self.start;
-                    self.start = self.start.add(delta);
-                }
+                self.start = *new_start;
             }
-            SessionField::End =>
+            SessionField::End(new_end) =>
             {
-                let new_end_time_string = field_value;
-                let date_string = self.get_date_string();
-                let new_datetime_string = format!("{new_end_time_string} {date_string}");
-
-                if let Ok(new_end_time) = NaiveDateTime::parse_from_str(&new_datetime_string, &datetime_format)
-                {
-                    if let Some(end) = self.end
-                    {
-                        let delta = new_end_time - self.start;
-                        self.end = Some(end.add(delta));
-                    }
-                }
+                self.end = *new_end;
             }
+            SessionField::None =>
+            {}
         }
     }
 }

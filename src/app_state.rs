@@ -44,11 +44,12 @@ pub enum SessionFieldEditState
 #[derive(Clone)]
 pub enum SessionField
 {
-    Date,
-    Description,
-    Tag,
-    Start,
-    End,
+    Date(NaiveDateTime),
+    Description(String),
+    Tag(String),
+    Start(NaiveDateTime),
+    End(Option<NaiveDateTime>),
+    None
 }
 
 #[derive(PartialEq, Copy, Clone)]
