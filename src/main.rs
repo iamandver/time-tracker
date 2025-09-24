@@ -1207,136 +1207,82 @@ fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2],
         let field = session_fields[session_field_index];
         let position = &field_positions[session_field_index];
 
-        if let CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(edit_field_state))) = &app_manager.state
+        let session_field_is_selected = session_is_selected && session_field_index == app_manager.get_selected_session_field_index();
+
+        if session_field_is_selected
+            && let CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(edit_field_state))) = &app_manager.state
         {
-            let session_field_is_selected =
-                session_is_selected && session_field_index == app_manager.get_selected_session_field_index();
-
-            match edit_field_state
+            let (bg_color, fg_color) = match edit_field_state
             {
-                SessionFieldEditState::Browse =>
+                SessionFieldEditState::Browse => (COL_TEXT_HIGHLIGHT, COL_TEXT_BLACK),
+                SessionFieldEditState::Editing => (COL_TEXT_RED, COL_TEXT_WHITE),
+            };
+
+            app_manager.renderer.push_color(ColorType::Background, bg_color);
+            app_manager.renderer.push_color(ColorType::Foreground, fg_color);
+
+            match &app_manager.selected_session_field
+            {
+                SessionField::Date(_) =>
+                {}
+                SessionField::Description(description_buffer) =>
                 {
-                    if session_field_is_selected
-                    {
-                        app_manager.renderer.push_color(ColorType::Background, COL_TEXT_HIGHLIGHT);
-                        app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_BLACK);
-                    }
-
-                    match &app_manager.selected_session_field
-                    {
-                        SessionField::Date(_) =>
-                        {
-                            app_manager.renderer.draw_at(field, position);
-                        }
-                        SessionField::Description(description_buffer) =>
-                        {
-                            app_manager.renderer.draw_at(description_buffer, position);
-                        }
-                        SessionField::Tag(tag_buffer) =>
-                        {
-                            app_manager.renderer.draw_at(tag_buffer, position);
-                        }
-                        SessionField::Start(_) =>
-                        {
-                            app_manager.renderer.draw_at(field, position);
-                        }
-                        SessionField::End(_) =>
-                        {
-                            app_manager.renderer.draw_at(field, position);
-                        }
-                        SessionField::None =>
-                        {}
-                    }
-
-                    if session_field_is_selected
-                    {
-                        app_manager.renderer.pop_color(ColorType::Background);
-                        app_manager.renderer.pop_color(ColorType::Foreground);
-                    }
+                    app_manager.renderer.draw_at(description_buffer, position);
                 }
-                SessionFieldEditState::Editing =>
+                SessionField::Tag(tag_buffer) => match edit_field_state
                 {
-                    if session_field_is_selected
+                    SessionFieldEditState::Browse =>
                     {
-                        app_manager.renderer.push_color(ColorType::Background, COL_TEXT_RED);
-                        app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_WHITE);
+                        app_manager.renderer.draw_at(tag_buffer, position);
                     }
-
-                    match &app_manager.selected_session_field
+                    SessionFieldEditState::Editing =>
                     {
-                        SessionField::Date(_) =>
-                        {}
-                        SessionField::Description(description_buffer) =>
+                        let dropdown_title = "EDIT TAG";
+                        let tag_dropdown_pos = position;
+                        let tag_dropdown_text_pos = Vector2::new(tag_dropdown_pos.x + 2, tag_dropdown_pos.y + 1);
+
+                        if let Some(longest_tag_str) = app_manager.tags.iter().map(String::len).max()
                         {
-                            if session_field_is_selected
+                            let longest_tag_str = cmp::max(longest_tag_str, dropdown_title.len() + 2) as u16;
+                            let tag_dropdown_size = Vector2::new(longest_tag_str + 8, app_manager.tags.len() as u16 + 2);
+
+                            draw_window(&mut app_manager.renderer, &tag_dropdown_size, tag_dropdown_pos);
+                            draw_window_shadow(&mut app_manager.renderer, &tag_dropdown_size, tag_dropdown_pos);
+
+                            draw_window_title(&mut app_manager.renderer, dropdown_title, tag_dropdown_pos);
+
+                            for (index, tag) in app_manager.tags.iter().enumerate()
                             {
-                                app_manager.renderer.draw_at(description_buffer, position);
+                                let selected_row = index == app_manager.temp_tag_index;
 
-                                let cursor_pos_x = position.x + description_buffer.len() as u16;
-
-                                app_manager.renderer.draw_at(CURSOR, &Vector2::new(cursor_pos_x, position.y));
-                            }
-                            else
-                            {
-                                app_manager.renderer.draw_at(field, position);
-                            }
-                        }
-                        SessionField::Tag(tag_buffer) =>
-                        {
-                            let dropdown_title = "EDIT TAG";
-                            let tag_dropdown_pos = position;
-                            let tag_dropdown_text_pos = Vector2::new(tag_dropdown_pos.x + 2, tag_dropdown_pos.y + 1);
-
-                            if let Some(longest_tag_str) = app_manager.tags.iter().map(String::len).max()
-                            {
-                                let longest_tag_str = cmp::max(longest_tag_str, dropdown_title.len() + 2) as u16;
-                                let tag_dropdown_size = Vector2::new(longest_tag_str + 8, app_manager.tags.len() as u16 + 2);
-
-                                draw_window(&mut app_manager.renderer, &tag_dropdown_size, tag_dropdown_pos);
-                                draw_window_shadow(&mut app_manager.renderer, &tag_dropdown_size, tag_dropdown_pos);
-
-                                // app_manager.renderer.push_color(ColorType::Background, COL_TEXT_BLACK);
-                                // app_manager.renderer.push_color(ColorType::Foreground, COL_BG_POPUP);
-                                draw_window_title(&mut app_manager.renderer, dropdown_title, tag_dropdown_pos);
-                                // app_manager.renderer.pop_color(ColorType::Background);
-                                // app_manager.renderer.pop_color(ColorType::Foreground);
-
-                                for (index, tag) in app_manager.tags.iter().enumerate()
+                                let arrow = if selected_row
                                 {
-                                    let selected_row = index == app_manager.temp_tag_index;
-
-                                    let arrow = if selected_row
-                                    {
-                                        ARROW
-                                    }
-                                    else
-                                    {
-                                        ' '
-                                    };
-
-                                    let right_pad = longest_tag_str as usize + 1;
-                                    app_manager.renderer.draw_at(
-                                        format!(" {} {:<pad$}", arrow, tag, pad = right_pad),
-                                        &Vector2::new(tag_dropdown_text_pos.x, tag_dropdown_text_pos.y + index as u16),
-                                    );
+                                    ARROW
                                 }
+                                else
+                                {
+                                    ' '
+                                };
+
+                                let right_pad = longest_tag_str as usize + 1;
+                                app_manager.renderer.draw_at(
+                                    format!(" {} {:<pad$}", arrow, tag, pad = right_pad),
+                                    &Vector2::new(tag_dropdown_text_pos.x, tag_dropdown_text_pos.y + index as u16),
+                                );
                             }
                         }
-                        SessionField::Start(_) =>
-                        {}
-                        SessionField::End(_) =>
-                        {}
-                        SessionField::None =>
-                        {}
                     }
-
-                    if session_field_is_selected
-                    {
-                        app_manager.renderer.pop_color(ColorType::Foreground);
-                        app_manager.renderer.pop_color(ColorType::Background);
-                    }
-                }
+                },
+                SessionField::Start(_) =>
+                {}
+                SessionField::End(_) =>
+                {}
+                SessionField::None =>
+                {}
             }
+
+            app_manager.renderer.pop_color(ColorType::Background);
+            app_manager.renderer.pop_color(ColorType::Foreground);
         }
         else
         {
