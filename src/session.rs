@@ -107,23 +107,23 @@ impl Session
         let time_format = format_split[1];
 
         let end = self.end.expect("Cannot export ongoing session.");
-        let duration = end - self.start;
+        // let duration = end - self.start;
 
-        let secs_per_minute = 60;
-        let secs_per_hour = 3600;
+        // let secs_per_minute = 60;
+        // let secs_per_hour = 3600;
 
-        let hours = duration.num_hours();
-        let minutes = duration.num_minutes() - hours * secs_per_minute;
-        let seconds = duration.num_seconds() - hours * secs_per_hour - minutes * secs_per_minute;
+        // let hours = duration.num_hours();
+        // let minutes = duration.num_minutes() - hours * secs_per_minute;
+        // let seconds = duration.num_seconds() - hours * secs_per_hour - minutes * secs_per_minute;
 
         let date = format!("{}", self.start.format(date_format));
         let description = &self.description;
         let tag = &self.tag;
         let start = format!("{}", self.start.format(time_format));
         let end = format!("{}", end.format(time_format));
-        let duration = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
+        // let duration = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
 
-        format!("{date}{separator}{description}{separator}{tag}{separator}{start}{separator}{end}{separator}{duration}")
+        format!("{date}{separator}{description}{separator}{tag}{separator}{start}{separator}{end}{separator}")
     }
 
     pub fn set_field(&mut self, field: &SessionField)

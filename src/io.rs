@@ -1,6 +1,6 @@
 use crossterm::cursor;
 use crossterm::style;
-use crossterm::style::{Attribute, Color, SetAttribute, SetBackgroundColor, SetForegroundColor};
+use crossterm::style::{Color, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{terminal, QueueableCommand};
 use std::fmt::{Display, Formatter};
@@ -55,7 +55,7 @@ impl Out
 {
     pub fn new() -> Out
     {
-        let mut out = Out {
+        let out = Out {
             stdout: stdout(),
             foreground_color_stack: vec![],
             background_color_stack: vec![],

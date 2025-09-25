@@ -1,15 +1,12 @@
+use crate::app_manager::AppManager;
 use crate::app_state::*;
-use crate::database_handler::DatabaseHandler;
-use chrono::{Datelike, Local, NaiveDateTime, Timelike};
 use colors::*;
 use control_keys::*;
 use crossterm::event;
 use crossterm::event::KeyCode;
 use io::{ColorType, Out, Vector2};
-use session::*;
 use sprites::*;
 use std::cmp;
-use std::cmp::PartialEq;
 
 mod app_state;
 mod colors;
@@ -19,306 +16,7 @@ mod io;
 mod session;
 mod sprites;
 
-struct AppManager
-{
-    version: String,
-    renderer: Out,
-    database_handler: DatabaseHandler,
-    value_separator: char,
-    date_format: String,
-    running: bool,
-    tags: Vec<String>,
-    temp_tag_index: usize,
-    selected_session_index: usize,
-    selected_session_field: SessionField,
-    selected_datetime_segment: usize,
-    selected_tag_index: usize,
-    sessions: Vec<Session>,
-    state: CommandState,
-    description_buffer: String,
-    tag_buffer: String,
-    session_edit_buffer: Option<Session>,
-}
-
-impl AppManager
-{
-    fn new() -> Self
-    {
-        let mut manager = AppManager {
-            version: "0.3.4".to_string(),
-            renderer: Out::new(),
-            database_handler: DatabaseHandler::new(),
-            value_separator: ';',
-            date_format: "%d-%m-%Y %H:%M:%S".to_string(),
-            running: true,
-            tags: Vec::new(),
-            temp_tag_index: 0,
-            selected_session_index: 0,
-            selected_session_field: SessionField::None,
-            selected_datetime_segment: 0,
-            selected_tag_index: 0,
-            sessions: Vec::new(),
-            state: CommandState::Idle,
-            description_buffer: String::new(),
-            tag_buffer: String::new(),
-            session_edit_buffer: None,
-        };
-
-        if let Some(sessions) = manager.database_handler.import_sessions(manager.value_separator, &manager.date_format)
-        {
-            manager.sessions = sessions;
-
-            if let Some(tags) = manager.database_handler.import_tags()
-            {
-                manager.tags = tags;
-
-                let last_used_tag = &manager.sessions.last().unwrap().tag;
-                let tag_index = manager.get_index_of_tag(last_used_tag);
-
-                manager.set_selected_tag_index(tag_index);
-            }
-        }
-
-        manager
-    }
-
-    fn increment_selected_session_field(&mut self)
-    {
-        if let Some(session_buffer) = &self.session_edit_buffer
-        {
-            self.selected_session_field = match self.selected_session_field
-            {
-                SessionField::Date(_) => SessionField::Description(session_buffer.description.clone()),
-                SessionField::Description(_) => SessionField::Tag(session_buffer.tag.clone()),
-                SessionField::Tag(_) => SessionField::Start(session_buffer.start),
-                SessionField::Start(_) | SessionField::End(_) => SessionField::End(session_buffer.end),
-                SessionField::None => SessionField::None,
-            }
-        }
-    }
-
-    fn decrement_selected_session_field(&mut self)
-    {
-        if let Some(session_buffer) = &self.session_edit_buffer
-        {
-            self.selected_session_field = match self.selected_session_field
-            {
-                SessionField::Date(_) | SessionField::Description(_) => SessionField::Date(session_buffer.start),
-                SessionField::Tag(_) => SessionField::Description(session_buffer.description.clone()),
-                SessionField::Start(_) => SessionField::Tag(session_buffer.tag.clone()),
-                SessionField::End(_) => SessionField::Start(session_buffer.start),
-                SessionField::None => SessionField::None,
-            }
-        }
-    }
-
-    fn get_selected_session_field_index(&self) -> usize
-    {
-        match self.selected_session_field
-        {
-            SessionField::None | SessionField::Date(_) => 0,
-            SessionField::Description(_) => 1,
-            SessionField::Tag(_) => 2,
-            SessionField::Start(_) => 3,
-            SessionField::End(_) => 4,
-        }
-    }
-
-    fn get_index_of_tag(&self, tag: &String) -> usize
-    {
-        self.tags.iter().position(|t| t.eq(tag)).expect("Failed to retrieve tag index.")
-    }
-
-    fn try_start_new_session(&mut self)
-    {
-        self.description_buffer = self.description_buffer.trim().to_string();
-
-        if let Some(selected_tag) = self.tags.get(self.get_selected_tag_index())
-            && !self.description_buffer.is_empty()
-        {
-            let start = self.get_current_time();
-
-            self.sessions.push(Session::from(&self.description_buffer, selected_tag, start, None));
-
-            self.description_buffer.clear();
-        }
-    }
-
-    fn get_current_time(&self) -> NaiveDateTime
-    {
-        let now = Local::now();
-        let date = now.date_naive();
-        let time = now.time();
-
-        let year = date.year();
-        let month = date.month();
-        let day = date.day();
-
-        let hour = time.hour();
-        let minute = time.minute();
-        let second = time.second();
-
-        let formatted_start = format!("{day}-{month}-{year} {hour}:{minute}:{second}");
-
-        NaiveDateTime::parse_from_str(&formatted_start, &self.date_format).expect("Failed to construct time.")
-    }
-
-    fn try_store_tag(&mut self)
-    {
-        self.tag_buffer = self.tag_buffer.trim().to_string();
-
-        if self.tag_buffer.is_empty() || self.tags.iter().any(|tag| tag.eq(&self.tag_buffer))
-        {
-            return;
-        }
-
-        self.tags.push(self.tag_buffer.clone());
-        self.database_handler.export_tag(&self.tag_buffer).expect("Failed to export tag.");
-        self.set_selected_tag_index(self.tags.len() - 1);
-        self.tag_buffer.clear();
-    }
-
-    fn set_selected_tag_index(&mut self, index: usize)
-    {
-        self.selected_tag_index = index;
-    }
-
-    fn get_selected_tag_index(&self) -> usize
-    {
-        self.selected_tag_index
-    }
-
-    fn is_last_session_still_running(&self) -> bool
-    {
-        if let Some(last_session) = self.sessions.last()
-        {
-            return last_session.is_running();
-        }
-
-        false
-    }
-
-    fn end_running_session(&mut self)
-    {
-        let end = self.get_current_time();
-
-        if let Some(last_session) = self.sessions.last_mut()
-        {
-            if last_session.is_running()
-            {
-                last_session.end = Some(end);
-                let session_string = last_session.construct_db_string(self.value_separator, &self.date_format);
-
-                self.database_handler.export_session(&session_string).expect("Error exporting session.");
-            }
-        }
-    }
-
-    fn delete_selected_session(&mut self)
-    {
-        if self.sessions.is_empty()
-        {
-            return;
-        }
-
-        if let Some(session) = self.sessions.get(self.selected_session_index)
-        {
-            if !session.is_running()
-            {
-                self.database_handler.delete_session(self.selected_session_index);
-            }
-        }
-
-        self.sessions.remove(self.selected_session_index);
-    }
-
-    fn continue_selected_session(&mut self)
-    {
-        if let Some(session) = self.sessions.get(self.selected_session_index)
-        {
-            if session.is_running()
-            {
-                return;
-            }
-
-            let description = &session.description;
-            let tag_index = self.get_index_of_tag(&session.tag);
-
-            self.description_buffer = description.clone();
-            self.set_selected_tag_index(tag_index);
-
-            self.try_start_new_session();
-        }
-    }
-
-    fn session_buffer_has_pending_changes(&self) -> bool
-    {
-        if let Some(selected_session) = self.sessions.get(self.selected_session_index)
-        {
-            if let Some(edited_session) = self.session_edit_buffer.clone()
-            {
-                !selected_session.eq(&edited_session)
-            }
-            else
-            {
-                false
-            }
-        }
-        else
-        {
-            false
-        }
-    }
-
-    fn apply_changes_to_session(&mut self)
-    {
-        if let Some(selected_session) = self.sessions.get_mut(self.selected_session_index)
-            && let Some(edited_session) = self.session_edit_buffer.clone()
-        {
-            selected_session.description = edited_session.description;
-            selected_session.tag = edited_session.tag;
-            selected_session.start = edited_session.start;
-            selected_session.end = edited_session.end;
-        }
-
-        self.database_handler
-            .export_all_sessions(&self.sessions, self.value_separator, &self.date_format)
-            .expect("Failed to export all sessions to db.");
-    }
-
-    fn store_modified_field_to_session_buffer(&mut self)
-    {
-        if let Some(selected_session) = self.session_edit_buffer.as_mut()
-        {
-            selected_session.set_field(&self.selected_session_field);
-        }
-    }
-
-    fn copy_selected_session_to_buffer(&mut self)
-    {
-        if let Some(selected_session) = self.sessions.get(self.selected_session_index)
-        {
-            self.session_edit_buffer = Some(selected_session.clone());
-            self.selected_session_field = SessionField::Date(selected_session.start);
-        }
-    }
-
-    fn clear_session_edit_buffer(&mut self)
-    {
-        self.session_edit_buffer = None;
-    }
-}
-
-fn debug_draw(app_manager: &mut AppManager, message: &str)
-{
-    let formatted_msg = format!(" {message} ");
-    let window_size = app_manager.renderer.get_terminal_size();
-    let debug_pos = Vector2::new(window_size.x - formatted_msg.len() as u16 - 2, app_manager.renderer.get_terminal_size().y - 2);
-
-    app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_MAIN);
-    app_manager.renderer.draw_at(formatted_msg, &debug_pos);
-    app_manager.renderer.pop_color(ColorType::Foreground);
-}
+mod app_manager;
 
 fn main()
 {
@@ -333,522 +31,6 @@ fn main()
 
         update(&mut app_manager);
     }
-}
-
-#[allow(clippy::too_many_lines)]
-fn update(app_manager: &mut AppManager)
-{
-    if let Some(key) = get_user_key()
-    {
-        match app_manager.state.clone()
-        {
-            CommandState::Idle => match key
-            {
-                KEY_NEW =>
-                {
-                    app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
-                }
-                KEY_EDIT =>
-                {
-                    app_manager.selected_session_index = app_manager.sessions.len() - 1;
-                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Browse));
-                }
-                KEY_CONTINUE =>
-                {
-                    app_manager.selected_session_index = app_manager.sessions.len() - 1;
-                    app_manager.state = CommandState::Modify(SessionModifyState::Continue(ConfirmOpen::No));
-                }
-                KEY_DELETE =>
-                {
-                    app_manager.selected_session_index = app_manager.sessions.len() - 1;
-                    app_manager.state = CommandState::Modify(SessionModifyState::Delete(ConfirmOpen::No));
-                }
-                KEY_END =>
-                {
-                    if app_manager.is_last_session_still_running()
-                    {
-                        app_manager.state = CommandState::End;
-                    }
-                }
-                KEY_QUIT =>
-                {
-                    app_manager.state = CommandState::Quitting;
-                }
-                _ =>
-                {}
-            },
-            CommandState::New(input_field) => match input_field
-            {
-                SessionInputState::Description(confirm_end_previous) => match confirm_end_previous
-                {
-                    ConfirmOpen::Yes =>
-                    {
-                        if key == KEY_YES
-                        {
-                            app_manager.end_running_session();
-                            app_manager.try_start_new_session();
-                            app_manager.state = CommandState::Idle;
-                        }
-                        else if key == KEY_NO || key == KEY_ESCAPE
-                        {
-                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
-                        }
-                    }
-                    ConfirmOpen::No => match key
-                    {
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::Idle;
-                        }
-                        KEY_BACKSPACE =>
-                        {
-                            app_manager.description_buffer.pop();
-                        }
-                        KEY_ENTER =>
-                        {
-                            if app_manager.is_last_session_still_running()
-                            {
-                                app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::Yes));
-                            }
-                            else
-                            {
-                                app_manager.try_start_new_session();
-                                app_manager.state = CommandState::Idle;
-                            }
-                        }
-                        KEY_TAB =>
-                        {
-                            app_manager.temp_tag_index = app_manager.get_selected_tag_index();
-                            app_manager.state = CommandState::New(SessionInputState::Tag(TagInputState::Select));
-                        }
-                        KeyCode::Char(character) =>
-                        {
-                            app_manager.description_buffer.push(character);
-                        }
-                        _ =>
-                        {}
-                    },
-                },
-                SessionInputState::Tag(edit_state) => match edit_state
-                {
-                    TagInputState::Select => match key
-                    {
-                        KEY_NEW =>
-                        {
-                            app_manager.state = CommandState::New(SessionInputState::Tag(TagInputState::New));
-                        }
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
-                        }
-                        KEY_UP =>
-                        {
-                            if app_manager.temp_tag_index > 0
-                            {
-                                app_manager.temp_tag_index -= 1;
-                            }
-                        }
-                        KEY_DOWN =>
-                        {
-                            if app_manager.temp_tag_index + 1 < app_manager.tags.len()
-                            {
-                                app_manager.temp_tag_index += 1;
-                            }
-                        }
-                        KEY_ENTER =>
-                        {
-                            app_manager.set_selected_tag_index(app_manager.temp_tag_index);
-                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
-                        }
-                        _ =>
-                        {}
-                    },
-                    TagInputState::New => match key
-                    {
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::New(SessionInputState::Tag(TagInputState::Select));
-                        }
-                        KEY_BACKSPACE =>
-                        {
-                            app_manager.tag_buffer.pop();
-                        }
-                        KEY_ENTER =>
-                        {
-                            app_manager.try_store_tag();
-                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
-                        }
-                        KeyCode::Char(character) =>
-                        {
-                            app_manager.tag_buffer.push(character);
-                        }
-                        _ =>
-                        {}
-                    },
-                    TagInputState::Delete(_) =>
-                    {}
-                },
-            },
-            CommandState::Modify(session_modify_state) => match session_modify_state
-            {
-                SessionModifyState::Edit(edit_state) => match edit_state
-                {
-                    SessionEditState::Browse => match key
-                    {
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::Idle;
-                        }
-                        KEY_UP =>
-                        {
-                            if app_manager.selected_session_index + 1 < app_manager.sessions.len()
-                            {
-                                app_manager.selected_session_index += 1;
-                            }
-                        }
-                        KEY_DOWN =>
-                        {
-                            if app_manager.selected_session_index > 0
-                            {
-                                app_manager.selected_session_index -= 1;
-                            }
-                        }
-                        KEY_ENTER =>
-                        {
-                            app_manager.copy_selected_session_to_buffer();
-                            app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
-                                SessionFieldEditState::Browse,
-                            )));
-                        }
-                        _ =>
-                        {}
-                    },
-                    SessionEditState::EditFields(state) => match state
-                    {
-                        SessionFieldEditState::Browse => match key
-                        {
-                            KEY_ESCAPE =>
-                            {
-                                if app_manager.session_buffer_has_pending_changes()
-                                {
-                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Confirm));
-                                }
-                                else
-                                {
-                                    app_manager.clear_session_edit_buffer();
-                                    app_manager.selected_session_field = SessionField::None;
-                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Browse));
-                                }
-                            }
-                            KEY_LEFT =>
-                            {
-                                app_manager.decrement_selected_session_field();
-
-                                if let SessionField::Tag(_) = &app_manager.selected_session_field
-                                {
-                                    let session_tag = &app_manager.session_edit_buffer.as_ref().unwrap().tag;
-                                    app_manager.temp_tag_index = app_manager.get_index_of_tag(session_tag);
-                                }
-                            }
-                            KEY_RIGHT =>
-                            {
-                                app_manager.increment_selected_session_field();
-
-                                if let SessionField::Tag(_) = &app_manager.selected_session_field
-                                {
-                                    let session_tag = &app_manager.session_edit_buffer.as_ref().unwrap().tag;
-                                    app_manager.temp_tag_index = app_manager.get_index_of_tag(session_tag);
-                                }
-                            }
-                            KEY_ENTER =>
-                            {
-                                app_manager.selected_datetime_segment = 0;
-                                app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
-                                    SessionFieldEditState::Editing,
-                                )));
-                            }
-                            _ =>
-                            {}
-                        },
-                        SessionFieldEditState::Editing =>
-                        {
-                            match key
-                            {
-                                KEY_ESCAPE =>
-                                {
-                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
-                                        SessionFieldEditState::Browse,
-                                    )));
-                                }
-                                KEY_ENTER =>
-                                {
-                                    app_manager.store_modified_field_to_session_buffer();
-
-                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
-                                        SessionFieldEditState::Browse,
-                                    )));
-                                }
-                                _ =>
-                                {}
-                            }
-
-                            match &mut app_manager.selected_session_field
-                            {
-                                SessionField::Date(date_buffer) => match key
-                                {
-                                    KEY_UP =>
-                                    {}
-                                    KEY_DOWN =>
-                                    {}
-                                    KEY_LEFT =>
-                                    {}
-                                    KEY_RIGHT =>
-                                    {}
-                                    _ =>
-                                    {}
-                                },
-                                SessionField::Description(description_buffer) => match key
-                                {
-                                    KEY_BACKSPACE =>
-                                    {
-                                        description_buffer.pop();
-                                    }
-                                    KeyCode::Char(character) =>
-                                    {
-                                        description_buffer.push(character);
-                                    }
-                                    _ =>
-                                    {}
-                                },
-
-                                SessionField::Tag(tag_buffer) => match key
-                                {
-                                    KEY_UP =>
-                                    {
-                                        if app_manager.temp_tag_index > 0
-                                        {
-                                            app_manager.temp_tag_index -= 1;
-                                        }
-
-                                        tag_buffer.clone_from(&app_manager.tags[app_manager.temp_tag_index]);
-                                    }
-                                    KEY_DOWN =>
-                                    {
-                                        if app_manager.temp_tag_index + 1 < app_manager.tags.len()
-                                        {
-                                            app_manager.temp_tag_index += 1;
-                                        }
-
-                                        tag_buffer.clone_from(&app_manager.tags[app_manager.temp_tag_index]);
-                                    }
-                                    _ =>
-                                    {}
-                                },
-                                SessionField::Start(start_buffer) =>
-                                {}
-                                SessionField::End(end_buffer) =>
-                                {}
-                                SessionField::None =>
-                                {}
-                            }
-                        }
-                    },
-                    SessionEditState::Confirm => match key
-                    {
-                        KEY_YES =>
-                        {
-                            app_manager.apply_changes_to_session();
-                            app_manager.clear_session_edit_buffer();
-                            app_manager.selected_session_field = SessionField::None;
-                            app_manager.state = CommandState::Idle;
-                        }
-                        KEY_NO =>
-                        {
-                            app_manager.clear_session_edit_buffer();
-                            app_manager.selected_session_field = SessionField::None;
-                            app_manager.state = CommandState::Idle;
-                        }
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
-                                SessionFieldEditState::Browse,
-                            )));
-                        }
-                        _ =>
-                        {}
-                    },
-                },
-                SessionModifyState::Continue(confirm_open) => match confirm_open
-                {
-                    ConfirmOpen::Yes =>
-                    {
-                        if key == KEY_YES
-                        {
-                            app_manager.continue_selected_session();
-                            app_manager.state = CommandState::Idle;
-                        }
-                        else if key == KEY_NO || key == KEY_ESCAPE
-                        {
-                            app_manager.state = CommandState::Idle;
-                        }
-                    }
-                    ConfirmOpen::No => match key
-                    {
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::Idle;
-                        }
-                        KEY_UP =>
-                        {
-                            if app_manager.selected_session_index + 1 < app_manager.sessions.len()
-                            {
-                                app_manager.selected_session_index += 1;
-                            }
-                        }
-                        KEY_DOWN =>
-                        {
-                            if app_manager.selected_session_index > 0
-                            {
-                                app_manager.selected_session_index -= 1;
-                            }
-                        }
-                        KEY_ENTER =>
-                        {
-                            app_manager.state = CommandState::Modify(SessionModifyState::Continue(ConfirmOpen::Yes));
-                        }
-                        _ =>
-                        {}
-                    },
-                },
-                SessionModifyState::Delete(confirm_open) => match confirm_open
-                {
-                    ConfirmOpen::Yes =>
-                    {
-                        if key == KEY_YES
-                        {
-                            app_manager.delete_selected_session();
-                            app_manager.state = CommandState::Idle;
-                        }
-                        else if key == KEY_NO || key == KEY_ESCAPE
-                        {
-                            app_manager.state = CommandState::Idle;
-                        }
-                    }
-                    ConfirmOpen::No => match key
-                    {
-                        KEY_ESCAPE =>
-                        {
-                            app_manager.state = CommandState::Idle;
-                        }
-                        KEY_UP =>
-                        {
-                            if app_manager.selected_session_index + 1 < app_manager.sessions.len()
-                            {
-                                app_manager.selected_session_index += 1;
-                            }
-                        }
-                        KEY_DOWN =>
-                        {
-                            if app_manager.selected_session_index > 0
-                            {
-                                app_manager.selected_session_index -= 1;
-                            }
-                        }
-                        KEY_ENTER =>
-                        {
-                            app_manager.state = CommandState::Modify(SessionModifyState::Delete(ConfirmOpen::Yes));
-                        }
-                        _ =>
-                        {}
-                    },
-                },
-            },
-            CommandState::End =>
-            {
-                if key == KEY_YES
-                {
-                    app_manager.end_running_session();
-                    app_manager.state = CommandState::Idle;
-                }
-                else if key == KEY_NO || key == KEY_ESCAPE
-                {
-                    app_manager.state = CommandState::Idle;
-                }
-            }
-            CommandState::Quitting =>
-            {
-                if key == KEY_YES
-                {
-                    if app_manager.is_last_session_still_running()
-                    {
-                        app_manager.end_running_session();
-                    }
-
-                    app_manager.running = false;
-                }
-                else if key == KEY_NO || key == KEY_ESCAPE
-                {
-                    app_manager.state = CommandState::Idle;
-                }
-            }
-        }
-    }
-}
-
-fn draw_window_title(renderer: &mut Out, title: &str, window_pos: &Vector2)
-{
-    const OFFSET: u16 = 2;
-    let title_pos = Vector2::new(window_pos.x + OFFSET, window_pos.y);
-    renderer.draw_at(format!(" {} ", title), &title_pos);
-}
-
-fn draw_window_shadow(renderer: &mut Out, window_size: &Vector2, window_pos: &Vector2)
-{
-    renderer.push_color(ColorType::Background, COL_WINDOW_SHADOW);
-    let shadow_bottom = " ".repeat(window_size.x as usize);
-    renderer.draw_at(shadow_bottom, &Vector2::new(window_pos.x + 1, window_pos.y + window_size.y));
-
-    for y in 1..=window_size.y
-    {
-        renderer.draw_at("  ", &Vector2::new(window_pos.x + window_size.x, window_pos.y + y));
-    }
-    renderer.pop_color(ColorType::Background);
-}
-
-fn draw_yes_no_popup(app_manager: &mut AppManager, title: &str)
-{
-    let confirm_popup_size = Vector2::new(40, 5);
-    let window_size = app_manager.renderer.get_terminal_size();
-    let confirm_popup_pos = Vector2::new((window_size.x - confirm_popup_size.x) / 2, (window_size.y - confirm_popup_size.y) / 2);
-    app_manager.renderer.push_color(ColorType::Background, COL_BG_POPUP);
-    app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_POPUP);
-
-    draw_window(&mut app_manager.renderer, &confirm_popup_size, &confirm_popup_pos);
-    draw_window_shadow(&mut app_manager.renderer, &confirm_popup_size, &confirm_popup_pos);
-
-    app_manager.renderer.push_color(ColorType::Background, COL_TEXT_BLACK);
-    app_manager.renderer.push_color(ColorType::Foreground, COL_BG_POPUP);
-    draw_window_title(&mut app_manager.renderer, title, &confirm_popup_pos);
-    app_manager.renderer.pop_color(ColorType::Background);
-    app_manager.renderer.pop_color(ColorType::Foreground);
-
-    let text_pos_y = confirm_popup_pos.y + confirm_popup_size.y / 2;
-    let yes_pos = Vector2::new(confirm_popup_pos.x + confirm_popup_size.x / 4 - 2, text_pos_y);
-    let no_pos = Vector2::new(confirm_popup_pos.x + (confirm_popup_size.x / 4) * 3 - 2, text_pos_y);
-
-    app_manager.renderer.draw_at('[', &yes_pos);
-    app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_RED_DARK);
-    app_manager.renderer.draw('y');
-    app_manager.renderer.pop_color(ColorType::Foreground);
-    app_manager.renderer.draw("]es");
-    app_manager.renderer.draw_at('[', &no_pos);
-    app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_RED_DARK);
-    app_manager.renderer.draw('n');
-    app_manager.renderer.pop_color(ColorType::Foreground);
-    app_manager.renderer.draw("]o");
-
-    app_manager.renderer.pop_color(ColorType::Foreground);
-    app_manager.renderer.pop_color(ColorType::Background);
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1189,6 +371,462 @@ fn render(app_manager: &mut AppManager)
 }
 
 #[allow(clippy::too_many_lines)]
+fn update(app_manager: &mut AppManager)
+{
+    if let Some(key) = get_user_key()
+    {
+        match app_manager.state.clone()
+        {
+            CommandState::Idle => match key
+            {
+                KEY_NEW =>
+                {
+                    app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
+                }
+                KEY_EDIT =>
+                {
+                    app_manager.selected_session_index = app_manager.sessions.len() - 1;
+                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Browse));
+                }
+                KEY_CONTINUE =>
+                {
+                    app_manager.selected_session_index = app_manager.sessions.len() - 1;
+                    app_manager.state = CommandState::Modify(SessionModifyState::Continue(ConfirmOpen::No));
+                }
+                KEY_DELETE =>
+                {
+                    app_manager.selected_session_index = app_manager.sessions.len() - 1;
+                    app_manager.state = CommandState::Modify(SessionModifyState::Delete(ConfirmOpen::No));
+                }
+                KEY_END =>
+                {
+                    if app_manager.is_last_session_still_running()
+                    {
+                        app_manager.state = CommandState::End;
+                    }
+                }
+                KEY_QUIT =>
+                {
+                    app_manager.state = CommandState::Quitting;
+                }
+                _ =>
+                {}
+            },
+            CommandState::New(input_field) => match input_field
+            {
+                SessionInputState::Description(confirm_end_previous) => match confirm_end_previous
+                {
+                    ConfirmOpen::Yes =>
+                    {
+                        if key == KEY_YES
+                        {
+                            app_manager.end_running_session();
+                            app_manager.try_start_new_session();
+                            app_manager.state = CommandState::Idle;
+                        }
+                        else if key == KEY_NO || key == KEY_ESCAPE
+                        {
+                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
+                        }
+                    }
+                    ConfirmOpen::No => match key
+                    {
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::Idle;
+                        }
+                        KEY_BACKSPACE =>
+                        {
+                            app_manager.description_buffer.pop();
+                        }
+                        KEY_ENTER =>
+                        {
+                            if app_manager.is_last_session_still_running()
+                            {
+                                app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::Yes));
+                            }
+                            else
+                            {
+                                app_manager.try_start_new_session();
+                                app_manager.state = CommandState::Idle;
+                            }
+                        }
+                        KEY_TAB =>
+                        {
+                            app_manager.temp_tag_index = app_manager.get_selected_tag_index();
+                            app_manager.state = CommandState::New(SessionInputState::Tag(TagInputState::Select));
+                        }
+                        KeyCode::Char(character) =>
+                        {
+                            app_manager.description_buffer.push(character);
+                        }
+                        _ =>
+                        {}
+                    },
+                },
+                SessionInputState::Tag(edit_state) => match edit_state
+                {
+                    TagInputState::Select => match key
+                    {
+                        KEY_NEW =>
+                        {
+                            app_manager.state = CommandState::New(SessionInputState::Tag(TagInputState::New));
+                        }
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
+                        }
+                        KEY_UP =>
+                        {
+                            if app_manager.temp_tag_index > 0
+                            {
+                                app_manager.temp_tag_index -= 1;
+                            }
+                        }
+                        KEY_DOWN =>
+                        {
+                            if app_manager.temp_tag_index + 1 < app_manager.tags.len()
+                            {
+                                app_manager.temp_tag_index += 1;
+                            }
+                        }
+                        KEY_ENTER =>
+                        {
+                            app_manager.set_selected_tag_index(app_manager.temp_tag_index);
+                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
+                        }
+                        _ =>
+                        {}
+                    },
+                    TagInputState::New => match key
+                    {
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::New(SessionInputState::Tag(TagInputState::Select));
+                        }
+                        KEY_BACKSPACE =>
+                        {
+                            app_manager.tag_buffer.pop();
+                        }
+                        KEY_ENTER =>
+                        {
+                            app_manager.try_store_tag();
+                            app_manager.state = CommandState::New(SessionInputState::Description(ConfirmOpen::No));
+                        }
+                        KeyCode::Char(character) =>
+                        {
+                            app_manager.tag_buffer.push(character);
+                        }
+                        _ =>
+                        {}
+                    },
+                    TagInputState::Delete(_) =>
+                    {}
+                },
+            },
+            CommandState::Modify(session_modify_state) => match session_modify_state
+            {
+                SessionModifyState::Edit(edit_state) => match edit_state
+                {
+                    SessionEditState::Browse => match key
+                    {
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::Idle;
+                        }
+                        KEY_UP =>
+                        {
+                            if app_manager.selected_session_index + 1 < app_manager.sessions.len()
+                            {
+                                app_manager.selected_session_index += 1;
+                            }
+                        }
+                        KEY_DOWN =>
+                        {
+                            if app_manager.selected_session_index > 0
+                            {
+                                app_manager.selected_session_index -= 1;
+                            }
+                        }
+                        KEY_ENTER =>
+                        {
+                            app_manager.copy_selected_session_to_buffer();
+                            app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
+                                SessionFieldEditState::Browse,
+                            )));
+                        }
+                        _ =>
+                        {}
+                    },
+                    SessionEditState::EditFields(state) => match state
+                    {
+                        SessionFieldEditState::Browse => match key
+                        {
+                            KEY_ESCAPE =>
+                            {
+                                if app_manager.session_buffer_has_pending_changes()
+                                {
+                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Confirm));
+                                }
+                                else
+                                {
+                                    app_manager.clear_session_edit_buffer();
+                                    app_manager.selected_session_field = SessionField::None;
+                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Browse));
+                                }
+                            }
+                            KEY_LEFT =>
+                            {
+                                app_manager.decrement_selected_session_field();
+                            }
+                            KEY_RIGHT =>
+                            {
+                                app_manager.increment_selected_session_field();
+                            }
+                            KEY_ENTER =>
+                            {
+                                app_manager.selected_datetime_segment = 0;
+                                app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
+                                    SessionFieldEditState::Editing,
+                                )));
+                            }
+                            _ =>
+                            {}
+                        },
+                        SessionFieldEditState::Editing =>
+                        {
+                            match key
+                            {
+                                KEY_ESCAPE =>
+                                {
+                                    let session_tag = &app_manager.session_edit_buffer.as_ref().unwrap().tag;
+                                    app_manager.temp_tag_index = app_manager.get_index_of_tag(session_tag);
+
+                                    if let SessionField::Tag(tag_buffer) = &mut app_manager.selected_session_field
+                                    {
+                                        tag_buffer.clone_from(session_tag);
+                                    }
+
+                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
+                                        SessionFieldEditState::Browse,
+                                    )));
+                                }
+                                KEY_ENTER =>
+                                {
+                                    app_manager.store_modified_field_to_session_buffer();
+
+                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
+                                        SessionFieldEditState::Browse,
+                                    )));
+                                }
+                                _ =>
+                                {}
+                            }
+
+                            match &mut app_manager.selected_session_field
+                            {
+                                SessionField::Date(date_buffer) => match key
+                                {
+                                    KEY_UP =>
+                                    {}
+                                    KEY_DOWN =>
+                                    {}
+                                    KEY_LEFT =>
+                                    {}
+                                    KEY_RIGHT =>
+                                    {}
+                                    _ =>
+                                    {}
+                                },
+                                SessionField::Description(description_buffer) => match key
+                                {
+                                    KEY_BACKSPACE =>
+                                    {
+                                        description_buffer.pop();
+                                    }
+                                    KeyCode::Char(character) =>
+                                    {
+                                        description_buffer.push(character);
+                                    }
+                                    _ =>
+                                    {}
+                                },
+
+                                SessionField::Tag(tag_buffer) => match key
+                                {
+                                    KEY_UP =>
+                                    {
+                                        if app_manager.temp_tag_index > 0
+                                        {
+                                            app_manager.temp_tag_index -= 1;
+                                        }
+
+                                        tag_buffer.clone_from(&app_manager.tags[app_manager.temp_tag_index]);
+                                    }
+                                    KEY_DOWN =>
+                                    {
+                                        if app_manager.temp_tag_index + 1 < app_manager.tags.len()
+                                        {
+                                            app_manager.temp_tag_index += 1;
+                                        }
+
+                                        tag_buffer.clone_from(&app_manager.tags[app_manager.temp_tag_index]);
+                                    }
+                                    _ =>
+                                    {}
+                                },
+                                SessionField::Start(start_buffer) =>
+                                {}
+                                SessionField::End(end_buffer) =>
+                                {}
+                                SessionField::None =>
+                                {}
+                            }
+                        }
+                    },
+                    SessionEditState::Confirm => match key
+                    {
+                        KEY_YES =>
+                        {
+                            app_manager.apply_changes_to_session();
+                            app_manager.clear_session_edit_buffer();
+                            app_manager.selected_session_field = SessionField::None;
+                            app_manager.state = CommandState::Idle;
+                        }
+                        KEY_NO =>
+                        {
+                            app_manager.clear_session_edit_buffer();
+                            app_manager.selected_session_field = SessionField::None;
+                            app_manager.state = CommandState::Idle;
+                        }
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
+                                SessionFieldEditState::Browse,
+                            )));
+                        }
+                        _ =>
+                        {}
+                    },
+                },
+                SessionModifyState::Continue(confirm_open) => match confirm_open
+                {
+                    ConfirmOpen::Yes =>
+                    {
+                        if key == KEY_YES
+                        {
+                            app_manager.start_new_session_based_on_selected();
+                            app_manager.state = CommandState::Idle;
+                        }
+                        else if key == KEY_NO || key == KEY_ESCAPE
+                        {
+                            app_manager.state = CommandState::Idle;
+                        }
+                    }
+                    ConfirmOpen::No => match key
+                    {
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::Idle;
+                        }
+                        KEY_UP =>
+                        {
+                            if app_manager.selected_session_index + 1 < app_manager.sessions.len()
+                            {
+                                app_manager.selected_session_index += 1;
+                            }
+                        }
+                        KEY_DOWN =>
+                        {
+                            if app_manager.selected_session_index > 0
+                            {
+                                app_manager.selected_session_index -= 1;
+                            }
+                        }
+                        KEY_ENTER =>
+                        {
+                            app_manager.state = CommandState::Modify(SessionModifyState::Continue(ConfirmOpen::Yes));
+                        }
+                        _ =>
+                        {}
+                    },
+                },
+                SessionModifyState::Delete(confirm_open) => match confirm_open
+                {
+                    ConfirmOpen::Yes =>
+                    {
+                        if key == KEY_YES
+                        {
+                            app_manager.delete_selected_session();
+                            app_manager.state = CommandState::Idle;
+                        }
+                        else if key == KEY_NO || key == KEY_ESCAPE
+                        {
+                            app_manager.state = CommandState::Idle;
+                        }
+                    }
+                    ConfirmOpen::No => match key
+                    {
+                        KEY_ESCAPE =>
+                        {
+                            app_manager.state = CommandState::Idle;
+                        }
+                        KEY_UP =>
+                        {
+                            if app_manager.selected_session_index + 1 < app_manager.sessions.len()
+                            {
+                                app_manager.selected_session_index += 1;
+                            }
+                        }
+                        KEY_DOWN =>
+                        {
+                            if app_manager.selected_session_index > 0
+                            {
+                                app_manager.selected_session_index -= 1;
+                            }
+                        }
+                        KEY_ENTER =>
+                        {
+                            app_manager.state = CommandState::Modify(SessionModifyState::Delete(ConfirmOpen::Yes));
+                        }
+                        _ =>
+                        {}
+                    },
+                },
+            },
+            CommandState::End =>
+            {
+                if key == KEY_YES
+                {
+                    app_manager.end_running_session();
+                    app_manager.state = CommandState::Idle;
+                }
+                else if key == KEY_NO || key == KEY_ESCAPE
+                {
+                    app_manager.state = CommandState::Idle;
+                }
+            }
+            CommandState::Quitting =>
+            {
+                if key == KEY_YES
+                {
+                    if app_manager.is_last_session_still_running()
+                    {
+                        app_manager.end_running_session();
+                    }
+
+                    app_manager.running = false;
+                }
+                else if key == KEY_NO || key == KEY_ESCAPE
+                {
+                    app_manager.state = CommandState::Idle;
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2], session_index: usize, session_is_selected: bool)
 {
     let session = &app_manager.sessions[session_index];
@@ -1225,10 +863,21 @@ fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2],
             {
                 SessionField::Date(_) =>
                 {}
-                SessionField::Description(description_buffer) =>
+                SessionField::Description(description_buffer) => match edit_field_state
                 {
-                    app_manager.renderer.draw_at(description_buffer, position);
-                }
+                    SessionFieldEditState::Browse =>
+                    {
+                        app_manager.renderer.draw_at(description_buffer, position);
+                    }
+                    SessionFieldEditState::Editing =>
+                    {
+                        app_manager.renderer.draw_at(description_buffer, position);
+
+                        let cursor_pos_x = position.x + (description_buffer.len() + app_manager.description_buffer.len()) as u16;
+
+                        app_manager.renderer.draw_at(CURSOR, &Vector2::new(cursor_pos_x, position.y));
+                    }
+                },
                 SessionField::Tag(tag_buffer) => match edit_field_state
                 {
                     SessionFieldEditState::Browse =>
@@ -1299,6 +948,73 @@ fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2],
     {
         app_manager.renderer.pop_color(ColorType::Foreground);
     }
+}
+
+fn debug_draw(app_manager: &mut AppManager, message: &str)
+{
+    let formatted_msg = format!(" {message} ");
+    let window_size = app_manager.renderer.get_terminal_size();
+    let debug_pos = Vector2::new(window_size.x - formatted_msg.len() as u16 - 2, app_manager.renderer.get_terminal_size().y - 2);
+
+    app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_MAIN);
+    app_manager.renderer.draw_at(formatted_msg, &debug_pos);
+    app_manager.renderer.pop_color(ColorType::Foreground);
+}
+
+fn draw_window_title(renderer: &mut Out, title: &str, window_pos: &Vector2)
+{
+    const OFFSET: u16 = 2;
+    let title_pos = Vector2::new(window_pos.x + OFFSET, window_pos.y);
+    renderer.draw_at(format!(" {} ", title), &title_pos);
+}
+
+fn draw_window_shadow(renderer: &mut Out, window_size: &Vector2, window_pos: &Vector2)
+{
+    renderer.push_color(ColorType::Background, COL_WINDOW_SHADOW);
+    let shadow_bottom = " ".repeat(window_size.x as usize);
+    renderer.draw_at(shadow_bottom, &Vector2::new(window_pos.x + 1, window_pos.y + window_size.y));
+
+    for y in 1..=window_size.y
+    {
+        renderer.draw_at("  ", &Vector2::new(window_pos.x + window_size.x, window_pos.y + y));
+    }
+    renderer.pop_color(ColorType::Background);
+}
+
+fn draw_yes_no_popup(app_manager: &mut AppManager, title: &str)
+{
+    let confirm_popup_size = Vector2::new(40, 5);
+    let window_size = app_manager.renderer.get_terminal_size();
+    let confirm_popup_pos = Vector2::new((window_size.x - confirm_popup_size.x) / 2, (window_size.y - confirm_popup_size.y) / 2);
+    app_manager.renderer.push_color(ColorType::Background, COL_BG_POPUP);
+    app_manager.renderer.push_color(ColorType::Foreground, COL_OUTLINE_POPUP);
+
+    draw_window(&mut app_manager.renderer, &confirm_popup_size, &confirm_popup_pos);
+    draw_window_shadow(&mut app_manager.renderer, &confirm_popup_size, &confirm_popup_pos);
+
+    app_manager.renderer.push_color(ColorType::Background, COL_TEXT_BLACK);
+    app_manager.renderer.push_color(ColorType::Foreground, COL_BG_POPUP);
+    draw_window_title(&mut app_manager.renderer, title, &confirm_popup_pos);
+    app_manager.renderer.pop_color(ColorType::Background);
+    app_manager.renderer.pop_color(ColorType::Foreground);
+
+    let text_pos_y = confirm_popup_pos.y + confirm_popup_size.y / 2;
+    let yes_pos = Vector2::new(confirm_popup_pos.x + confirm_popup_size.x / 4 - 2, text_pos_y);
+    let no_pos = Vector2::new(confirm_popup_pos.x + (confirm_popup_size.x / 4) * 3 - 2, text_pos_y);
+
+    app_manager.renderer.draw_at('[', &yes_pos);
+    app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_RED_DARK);
+    app_manager.renderer.draw('y');
+    app_manager.renderer.pop_color(ColorType::Foreground);
+    app_manager.renderer.draw("]es");
+    app_manager.renderer.draw_at('[', &no_pos);
+    app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_RED_DARK);
+    app_manager.renderer.draw('n');
+    app_manager.renderer.pop_color(ColorType::Foreground);
+    app_manager.renderer.draw("]o");
+
+    app_manager.renderer.pop_color(ColorType::Foreground);
+    app_manager.renderer.pop_color(ColorType::Background);
 }
 
 fn draw_session_selection_line(app_manager: &mut AppManager, content_offset: &Vector2, command_label: &str)
