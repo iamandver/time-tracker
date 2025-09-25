@@ -1,5 +1,6 @@
 use crate::app_manager::AppManager;
 use crate::app_state::*;
+use chrono::{NaiveDateTime, TimeDelta};
 use colors::*;
 use control_keys::*;
 use crossterm::event;
@@ -7,6 +8,7 @@ use crossterm::event::KeyCode;
 use io::{ColorType, Out, Vector2};
 use sprites::*;
 use std::cmp;
+use std::ops::Add;
 
 mod app_state;
 mod colors;
@@ -586,9 +588,23 @@ fn update(app_manager: &mut AppManager)
                             KEY_ENTER =>
                             {
                                 app_manager.selected_datetime_segment = 0;
-                                app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
-                                    SessionFieldEditState::Editing,
-                                )));
+
+                                let can_edit = if let SessionField::End(_) = app_manager.selected_session_field
+                                    && app_manager.is_last_session_still_running()
+                                {
+                                    false
+                                }
+                                else
+                                {
+                                    true
+                                };
+
+                                if can_edit
+                                {
+                                    app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
+                                        SessionFieldEditState::Editing,
+                                    )));
+                                }
                             }
                             _ =>
                             {}
@@ -599,12 +615,33 @@ fn update(app_manager: &mut AppManager)
                             {
                                 KEY_ESCAPE =>
                                 {
-                                    let session_tag = &app_manager.session_edit_buffer.as_ref().unwrap().tag;
-                                    app_manager.temp_tag_index = app_manager.get_index_of_tag(session_tag);
+                                    let session_edit_buffer = &app_manager.session_edit_buffer.as_ref().unwrap();
+                                    app_manager.temp_tag_index = app_manager.get_index_of_tag(&session_edit_buffer.tag);
 
-                                    if let SessionField::Tag(tag_buffer) = &mut app_manager.selected_session_field
+                                    match &mut app_manager.selected_session_field
                                     {
-                                        tag_buffer.clone_from(session_tag);
+                                        SessionField::Date(date_buffer) =>
+                                        {
+                                            *date_buffer = session_edit_buffer.start;
+                                        }
+                                        SessionField::Description(description_buffer) =>
+                                        {
+                                            description_buffer.clone_from(&session_edit_buffer.description);
+                                        }
+                                        SessionField::Tag(tag_buffer) =>
+                                        {
+                                            tag_buffer.clone_from(&session_edit_buffer.tag);
+                                        }
+                                        SessionField::Start(start_time_buffer) =>
+                                        {
+                                            *start_time_buffer = session_edit_buffer.start;
+                                        }
+                                        SessionField::End(end_time_buffer) =>
+                                        {
+                                            *end_time_buffer = session_edit_buffer.end;
+                                        }
+                                        SessionField::None =>
+                                        {}
                                     }
 
                                     app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::EditFields(
@@ -625,19 +662,33 @@ fn update(app_manager: &mut AppManager)
 
                             match &mut app_manager.selected_session_field
                             {
-                                SessionField::Date(date_buffer) => match key
+                                SessionField::Date(date_buffer) =>
                                 {
-                                    KEY_UP =>
-                                    {}
-                                    KEY_DOWN =>
-                                    {}
-                                    KEY_LEFT =>
-                                    {}
-                                    KEY_RIGHT =>
-                                    {}
-                                    _ =>
-                                    {}
-                                },
+                                    if let Some(new_date) = edit_date(key, app_manager.selected_datetime_segment, *date_buffer)
+                                    {
+                                        *date_buffer = new_date;
+                                    }
+
+                                    match key
+                                    {
+                                        KEY_LEFT =>
+                                        {
+                                            if app_manager.selected_datetime_segment > 0
+                                            {
+                                                app_manager.selected_datetime_segment -= 1;
+                                            }
+                                        }
+                                        KEY_RIGHT =>
+                                        {
+                                            if app_manager.selected_datetime_segment < 2
+                                            {
+                                                app_manager.selected_datetime_segment += 1;
+                                            }
+                                        }
+                                        _ =>
+                                        {}
+                                    }
+                                }
                                 SessionField::Description(description_buffer) => match key
                                 {
                                     KEY_BACKSPACE =>
@@ -676,9 +727,60 @@ fn update(app_manager: &mut AppManager)
                                     {}
                                 },
                                 SessionField::Start(start_buffer) =>
-                                {}
+                                {
+                                    if let Some(new_date) = edit_time(key, app_manager.selected_datetime_segment, *start_buffer)
+                                    {
+                                        *start_buffer = new_date;
+                                    }
+
+                                    match key
+                                    {
+                                        KEY_LEFT =>
+                                        {
+                                            if app_manager.selected_datetime_segment > 0
+                                            {
+                                                app_manager.selected_datetime_segment -= 1;
+                                            }
+                                        }
+                                        KEY_RIGHT =>
+                                        {
+                                            if app_manager.selected_datetime_segment < 2
+                                            {
+                                                app_manager.selected_datetime_segment += 1;
+                                            }
+                                        }
+                                        _ =>
+                                        {}
+                                    }
+                                }
                                 SessionField::End(end_buffer) =>
-                                {}
+                                {
+                                    if let Some(end_buffer) = end_buffer
+                                        && let Some(new_date) = edit_time(key, app_manager.selected_datetime_segment, *end_buffer)
+                                    {
+                                        *end_buffer = new_date;
+                                    }
+
+                                    match key
+                                    {
+                                        KEY_LEFT =>
+                                        {
+                                            if app_manager.selected_datetime_segment > 0
+                                            {
+                                                app_manager.selected_datetime_segment -= 1;
+                                            }
+                                        }
+                                        KEY_RIGHT =>
+                                        {
+                                            if app_manager.selected_datetime_segment < 2
+                                            {
+                                                app_manager.selected_datetime_segment += 1;
+                                            }
+                                        }
+                                        _ =>
+                                        {}
+                                    }
+                                }
                                 SessionField::None =>
                                 {}
                             }
@@ -826,6 +928,52 @@ fn update(app_manager: &mut AppManager)
     }
 }
 
+fn edit_date(key: KeyCode, date_segment: usize, date: NaiveDateTime) -> Option<NaiveDateTime>
+{
+    match key
+    {
+        KEY_UP => match date_segment
+        {
+            0 => date.checked_add_days(chrono::Days::new(1)),
+            1 => date.checked_add_months(chrono::Months::new(1)),
+            2 => date.checked_add_months(chrono::Months::new(12)),
+            _ => None,
+        },
+        KEY_DOWN => match date_segment
+        {
+            0 => date.checked_sub_days(chrono::Days::new(1)),
+            1 => date.checked_sub_months(chrono::Months::new(1)),
+            2 => date.checked_sub_months(chrono::Months::new(12)),
+            _ => None,
+        },
+
+        _ => None,
+    }
+}
+
+fn edit_time(key: KeyCode, date_segment: usize, time: NaiveDateTime) -> Option<NaiveDateTime>
+{
+    match key
+    {
+        KEY_UP => match date_segment
+        {
+            0 => time.checked_add_signed(TimeDelta::hours(1)),
+            1 => time.checked_add_signed(TimeDelta::minutes(1)),
+            2 => time.checked_add_signed(TimeDelta::seconds(1)),
+            _ => None,
+        },
+        KEY_DOWN => match date_segment
+        {
+            0 => time.checked_sub_signed(TimeDelta::hours(1)),
+            1 => time.checked_sub_signed(TimeDelta::minutes(1)),
+            2 => time.checked_sub_signed(TimeDelta::seconds(1)),
+            _ => None,
+        },
+
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2], session_index: usize, session_is_selected: bool)
 {
@@ -870,8 +1018,27 @@ fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2],
 
             match &app_manager.selected_session_field
             {
-                SessionField::Date(_) =>
-                {}
+                SessionField::Date(date_buffer) =>
+                {
+                    app_manager.renderer.push_color(ColorType::Background, COL_TEXT_HIGHLIGHT);
+                    app_manager.renderer.push_color(ColorType::Foreground, COL_TEXT_BLACK);
+
+                    let date = format!("{}", date_buffer.format("%d %b %y"));
+                    app_manager.renderer.draw_at(date, position);
+
+                    app_manager.renderer.pop_color(ColorType::Background);
+                    app_manager.renderer.pop_color(ColorType::Foreground);
+
+                    let (selected_date_segment, position_offset) = match app_manager.selected_datetime_segment
+                    {
+                        0 => (format!("{}", date_buffer.format("%d")), 0),
+                        1 => (format!("{}", date_buffer.format("%b")), 3),
+                        2 => (format!("{}", date_buffer.format("%y")), 7),
+                        _ => (String::new(), 0),
+                    };
+
+                    app_manager.renderer.draw_at(selected_date_segment, &Vector2::new(position.x + position_offset, position.y));
+                }
                 SessionField::Description(description_buffer) => match edit_field_state
                 {
                     SessionFieldEditState::Browse =>
@@ -931,10 +1098,21 @@ fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2],
                         }
                     }
                 },
-                SessionField::Start(_) =>
-                {}
-                SessionField::End(_) =>
-                {}
+                SessionField::Start(start_buffer) =>
+                {
+                    render_edited_time(&mut app_manager.renderer, app_manager.selected_datetime_segment, start_buffer, position);
+                }
+                SessionField::End(end_buffer) =>
+                {
+                    if let Some(end_buffer) = end_buffer
+                    {
+                        render_edited_time(&mut app_manager.renderer, app_manager.selected_datetime_segment, end_buffer, position);
+                    }
+                    else
+                    {
+                        app_manager.renderer.draw_at(field, position);
+                    }
+                }
                 SessionField::None =>
                 {}
             }
@@ -957,6 +1135,28 @@ fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2],
     {
         app_manager.renderer.pop_color(ColorType::Foreground);
     }
+}
+
+fn render_edited_time(renderer: &mut Out, datetime_segment: usize, time: &NaiveDateTime, position: &Vector2)
+{
+    renderer.push_color(ColorType::Background, COL_TEXT_HIGHLIGHT);
+    renderer.push_color(ColorType::Foreground, COL_TEXT_BLACK);
+
+    let date = format!("{}", time.format("%H:%M:%S"));
+    renderer.draw_at(date, position);
+
+    renderer.pop_color(ColorType::Background);
+    renderer.pop_color(ColorType::Foreground);
+
+    let (selected_date_segment, position_offset) = match datetime_segment
+    {
+        0 => (format!("{}", time.format("%H")), 0),
+        1 => (format!("{}", time.format("%M")), 3),
+        2 => (format!("{}", time.format("%S")), 6),
+        _ => (String::new(), 0),
+    };
+
+    renderer.draw_at(selected_date_segment, &Vector2::new(position.x + position_offset, position.y));
 }
 
 fn debug_draw(app_manager: &mut AppManager, message: &str)

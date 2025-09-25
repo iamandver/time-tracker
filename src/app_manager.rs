@@ -1,9 +1,9 @@
-use chrono::{Datelike, Timelike};
-use chrono::{Local, NaiveDateTime};
 use crate::app_state::{CommandState, SessionField};
 use crate::database_handler::DatabaseHandler;
 use crate::io::Out;
 use crate::session::Session;
+use chrono::{Datelike, Timelike};
+use chrono::{Local, NaiveDateTime};
 
 pub struct AppManager
 {
@@ -31,7 +31,7 @@ impl AppManager
     pub fn new() -> Self
     {
         let mut manager = AppManager {
-            version: "0.3.4".to_string(),
+            version: "0.4.6".to_string(),
             renderer: Out::new(),
             database_handler: DatabaseHandler::new(),
             value_separator: ';',
@@ -265,11 +265,14 @@ impl AppManager
             selected_session.tag = edited_session.tag;
             selected_session.start = edited_session.start;
             selected_session.end = edited_session.end;
-        }
 
-        self.database_handler
-            .export_all_sessions(&self.sessions, self.value_separator, &self.date_format)
-            .expect("Failed to export all sessions to db.");
+            if !selected_session.is_running()
+            {
+                self.database_handler
+                    .export_all_sessions(&self.sessions, self.value_separator, &self.date_format)
+                    .expect("Failed to export all sessions to db.");
+            }
+        }
     }
 
     pub fn store_modified_field_to_session_buffer(&mut self)
