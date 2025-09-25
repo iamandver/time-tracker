@@ -829,7 +829,16 @@ fn update(app_manager: &mut AppManager)
 #[allow(clippy::too_many_lines)]
 fn draw_session_entry(app_manager: &mut AppManager, field_positions: &[Vector2], session_index: usize, session_is_selected: bool)
 {
-    let session = &app_manager.sessions[session_index];
+    let session = if let CommandState::Modify(SessionModifyState::Edit(_)) = &app_manager.state
+        && let Some(session_buffer) = &app_manager.session_edit_buffer
+        && session_is_selected
+    {
+        session_buffer
+    }
+    else
+    {
+        &app_manager.sessions[session_index]
+    };
 
     let start_date = session.get_date_string();
     let description = &session.description;
