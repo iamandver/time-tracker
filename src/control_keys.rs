@@ -49,7 +49,7 @@ pub fn get_controls() -> Vec<Control>
         },
         Control {
             key: KEY_DELETE,
-            description: "delete".to_string(),
+            description: "deleted".to_string(),
         },
         Control {
             key: KEY_COPY,
