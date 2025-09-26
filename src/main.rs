@@ -330,7 +330,16 @@ fn render(app_manager: &mut AppManager)
                 {
                     ConfirmOpen::Yes =>
                     {
-                        draw_yes_no_popup(app_manager, "COPY AND START SESSION?");
+                        let message = if app_manager.is_last_session_still_running()
+                        {
+                            "END RUNNING SESSION?"
+                        }
+                        else
+                        {
+                            "COPY AND START SESSION?"
+                        };
+
+                        draw_yes_no_popup(app_manager, message);
                     }
                     ConfirmOpen::No =>
                     {}
@@ -390,7 +399,7 @@ fn update(app_manager: &mut AppManager)
                     app_manager.selected_session_index = app_manager.sessions.len() - 1;
                     app_manager.state = CommandState::Modify(SessionModifyState::Edit(SessionEditState::Browse));
                 }
-                KEY_CONTINUE =>
+                KEY_COPY =>
                 {
                     app_manager.selected_session_index = app_manager.sessions.len() - 1;
                     app_manager.state = CommandState::Modify(SessionModifyState::Continue(ConfirmOpen::No));

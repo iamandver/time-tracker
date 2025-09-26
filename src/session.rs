@@ -43,23 +43,21 @@ impl Session
         self.end.is_none()
     }
 
-    // pub fn get_field(&self, field: &SessionField)
-
-    pub fn get_field_as_string(&self, field: &SessionField) -> String
-    {
-        match field
-        {
-            SessionField::Date(_) => self.get_date_string(),
-            SessionField::Description(_) => self.description.clone(),
-            SessionField::Tag(_) => self.tag.clone(),
-            SessionField::Start(_) => self.get_start_time_string(),
-            SessionField::End(_) => self.get_end_time_string().unwrap_or_default(),
-            SessionField::None =>
-            {
-                panic!("Never call with variant 'None'");
-            }
-        }
-    }
+    // pub fn get_field_as_string(&self, field: &SessionField) -> String
+    // {
+    //     match field
+    //     {
+    //         SessionField::Date(_) => self.get_date_string(),
+    //         SessionField::Description(_) => self.description.clone(),
+    //         SessionField::Tag(_) => self.tag.clone(),
+    //         SessionField::Start(_) => self.get_start_time_string(),
+    //         SessionField::End(_) => self.get_end_time_string().unwrap_or_default(),
+    //         SessionField::None =>
+    //         {
+    //             panic!("Never call with variant 'None'");
+    //         }
+    //     }
+    // }
 
     pub fn get_date_string(&self) -> String
     {
@@ -106,32 +104,19 @@ impl Session
         let date_format = format_split[0];
         let time_format = format_split[1];
 
-        let end = self.end.expect("Cannot export ongoing session.");
-        // let duration = end - self.start;
-
-        // let secs_per_minute = 60;
-        // let secs_per_hour = 3600;
-
-        // let hours = duration.num_hours();
-        // let minutes = duration.num_minutes() - hours * secs_per_minute;
-        // let seconds = duration.num_seconds() - hours * secs_per_hour - minutes * secs_per_minute;
-
         let date = format!("{}", self.start.format(date_format));
         let description = &self.description;
         let tag = &self.tag;
         let start = format!("{}", self.start.format(time_format));
+
+        let end = self.end.expect("Cannot export ongoing session.");
         let end = format!("{}", end.format(time_format));
-        // let duration = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
 
         format!("{date}{separator}{description}{separator}{tag}{separator}{start}{separator}{end}{separator}")
     }
 
     pub fn set_field(&mut self, field: &SessionField)
     {
-        // const DATE_FORMAT: &str = "%d %b %y";
-        // const TIME_FORMAT: &str = "%H:%M:%S";
-        // let datetime_format = format!("{DATE_FORMAT} {TIME_FORMAT}");
-
         match field
         {
             SessionField::Date(new_date) =>

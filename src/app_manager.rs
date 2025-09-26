@@ -189,14 +189,12 @@ impl AppManager
         let end = self.get_current_time();
 
         if let Some(last_session) = self.sessions.last_mut()
+            && last_session.is_running()
         {
-            if last_session.is_running()
-            {
-                last_session.end = Some(end);
-                let session_string = last_session.construct_db_string(self.value_separator, &self.date_format);
+            last_session.end = Some(end);
+            let session_string = last_session.construct_db_string(self.value_separator, &self.date_format);
 
-                self.database_handler.export_session(&session_string).expect("Error exporting session.");
-            }
+            self.database_handler.export_session(&session_string).expect("Error exporting session.");
         }
     }
 
@@ -208,11 +206,9 @@ impl AppManager
         }
 
         if let Some(session) = self.sessions.get(self.selected_session_index)
+            && !session.is_running()
         {
-            if !session.is_running()
-            {
-                self.database_handler.delete_session(self.selected_session_index);
-            }
+            self.database_handler.delete_session(self.selected_session_index);
         }
 
         self.sessions.remove(self.selected_session_index);
@@ -220,6 +216,11 @@ impl AppManager
 
     pub fn start_new_session_based_on_selected(&mut self)
     {
+        if self.is_last_session_still_running()
+        {
+            self.end_running_session();
+        }
+
         if let Some(session) = self.sessions.get(self.selected_session_index)
         {
             if session.is_running()

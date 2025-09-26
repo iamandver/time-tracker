@@ -183,16 +183,14 @@ impl DatabaseHandler
             let entries = BufReader::new(file).lines().map_while(Result::ok).filter(|x| !x.is_empty()).collect::<Vec<String>>();
 
             if !entries.is_empty()
+                && let Ok(mut temp_file) = OpenOptions::new().truncate(true).write(true).create_new(true).open(temp_path.clone())
             {
-                if let Ok(mut temp_file) = OpenOptions::new().truncate(true).write(true).create_new(true).open(temp_path.clone())
+                for entry in entries
                 {
-                    for entry in entries
-                    {
-                        temp_file.write_fmt(format_args!("{}\n", entry)).expect("Failed to write to temp file.");
-                    }
-
-                    fs::rename(&temp_path, &file_path).expect("Failed renaming after removing empty lines.");
+                    temp_file.write_fmt(format_args!("{}\n", entry)).expect("Failed to write to temp file.");
                 }
+
+                fs::rename(&temp_path, &file_path).expect("Failed renaming after removing empty lines.");
             }
         }
     }

@@ -4,7 +4,7 @@ pub const KEY_NEW: KeyCode = KeyCode::Char('n');
 pub const KEY_DELETE: KeyCode = KeyCode::Char('d');
 pub const KEY_END: KeyCode = KeyCode::Char(' ');
 pub const KEY_EDIT: KeyCode = KeyCode::Char('e');
-pub const KEY_CONTINUE: KeyCode = KeyCode::Char('c');
+pub const KEY_COPY: KeyCode = KeyCode::Char('c');
 pub const KEY_QUIT: KeyCode = KeyCode::Char('q');
 pub const KEY_ENTER: KeyCode = KeyCode::Enter;
 pub const KEY_TAB: KeyCode = KeyCode::Tab;
@@ -44,8 +44,16 @@ pub fn get_controls() -> Vec<Control>
             description: "new".to_string(),
         },
         Control {
+            key: KEY_EDIT,
+            description: "edit".to_string(),
+        },
+        Control {
             key: KEY_DELETE,
             description: "delete".to_string(),
+        },
+        Control {
+            key: KEY_COPY,
+            description: "copy".to_string(),
         },
         Control {
             key: KEY_END,
